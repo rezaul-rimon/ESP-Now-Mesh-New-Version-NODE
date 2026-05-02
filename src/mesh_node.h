@@ -1,6 +1,7 @@
 #pragma once
 
 #include <config.h>
+#include "smart_switch.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_now.h>
@@ -10,18 +11,35 @@
 
 typedef enum {
     MSG_CMD = 1,
-    MSG_ACK = 2,
-    MSG_HEARTBEAT = 3,
-    MSG_SENSOR = 4
+    MSG_ACK,
+    MSG_HB,
+    MSG_TMP
 } message_type_t;
+
+struct Message {
+    String sender_id;
+    String receiver_id;
+    String command;
+    message_type_t type;
+    String msg_id;
+    String last_hop;
+    uint8_t hop_count;
+};
+
+String generateMessageID() {
+    uint16_t randNum = esp_random() & 0xFFFF;
+    char id[5];
+    sprintf(id, "%04X", randNum);
+    return String(id);
+}
 
 // Debug helper
 const char* getTypeName(message_type_t type) {
     switch(type) {
         case MSG_CMD: return "CMD";
         case MSG_ACK: return "ACK";
-        case MSG_HEARTBEAT: return "HEARTBEAT";
-        case MSG_SENSOR: return "SENSOR";
+        case MSG_HB: return "HEARTBEAT";
+        case MSG_TMP: return "SENSOR";
         default: return "UNKNOWN";
     }
 }
@@ -181,15 +199,19 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
     String last_hop  = msg.substring(i5 + 1, i6);
     int hop_count    = msg.substring(i6 + 1).toInt();
 
+    DEBUG_PRINTLN("Raw type: " + String(type));
     DEBUG_PRINTLN("Type: " + String(getTypeName(type)));
 
     // Rebroadcast first
     rebroadcastIfNeeded(sender, receiver, command, type, msg_id, last_hop, hop_count);
 
     // Not for me
-    if (receiver != nodeID) return;
-
-    // Ignore ACK execution
+    if (receiver != nodeID && receiver != MasterID){
+        DEBUG_PRINTLN("Not for me so ignoring... (receiver: " + receiver + ")");
+        return;
+    }
+    
+    // Ignore ACK execution (Just extra saafety to prevent loops in case rebroadcast logic messed up)
     if (type == MSG_ACK) {
         DEBUG_PRINTLN("ACK received");
         return;
@@ -205,12 +227,10 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
     DEBUG_PRINTLN("✅ CMD: " + command);
 
     // ================= LED For Debugging =================
-    if (command == "red") leds[0] = CRGB::Red;
-    else if (command == "green") leds[0] = CRGB::Green;
-    else if (command == "blue") leds[0] = CRGB::Blue;
-    else if (command == "off") leds[0] = CRGB::Black;
-
-    FastLED.show();
+    if (command == "red") sendLedCommand(LED_RED);
+    else if (command == "green") sendLedCommand(LED_GREEN);
+    else if (command == "blue") sendLedCommand(LED_BLUE);
+    else if (command == "off") sendLedCommand(LED_IDLE);
     //=========================================================
 
     //=============Set up ACK fields and send back================
@@ -219,12 +239,14 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
         preferences.begin("device_config", false);
         preferences.putBool("is_repeater", true);
         preferences.end();
+        sendLedCommand(LED_REPEATER_ON);
     }
     if(command == "repeater:0") {
         isRepeater = false;
         preferences.begin("device_config", false);
         preferences.putBool("is_repeater", false);
         preferences.end();
+        sendLedCommand(LED_REPEATER_OFF);
     }
 
     if(command.startsWith("max_fwds:")) {
@@ -235,6 +257,7 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
         preferences.begin("device_config", false);
         preferences.putInt("max_fwds", MAX_FWDS);
         preferences.end();
+        sendLedCommand(LED_MAX_FWDS_SET);
     }
     if(command.startsWith("max_hops:")) {
         MAX_HOPS = command.substring(9).toInt();
@@ -244,6 +267,7 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
         preferences.begin("device_config", false);
         preferences.putInt("max_hops", MAX_HOPS);
         preferences.end();
+        sendLedCommand(LED_MAX_HOPS_SET);
     }
     if(command.startsWith("hb_interval:")) {
         hb_interval = command.substring(12).toInt();
@@ -254,9 +278,40 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
         preferences.begin("device_config", false);
         preferences.putInt("hb_interval", hb_interval);
         preferences.end();
+        sendLedCommand(LED_HEARTBEAT_SET);
+    }
+
+    if(command == "enc:1") {
+        useEncryption = true;
+        preferences.begin("device_config", false);
+        preferences.putBool("use_encryption", true);
+        preferences.end();
+
+        sendLedCommand(LED_REPEATER_ON);
+    }
+    if(command == "enc:0") {
+        useEncryption = false;
+        preferences.begin("device_config", false);
+        preferences.putBool("use_encryption", false);
+        preferences.end();
+
+        sendLedCommand(LED_REPEATER_OFF);
+    }
+
+    // Handle switch commands
+    //============================================================//
+
+    if(command == "sw1:1" || command == "sw1:0" ||
+        command == "sw2:1" || command == "sw2:0" ||
+        command == "sw3:1" || command == "sw3:0" ||
+        command == "sw4:1" || command == "sw4:0" ||
+        command == "sw1234:1" || command == "sw1234:0") {
+        Serial.println("Handling switch command: " + command);
+        handleSwitches(command);
     }
 
     // ================= SEND ACK =================
+    delay(random(70, 271));
     String ack =
         String(nodeID) + "," +
         sender + "," +
@@ -276,6 +331,7 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
         esp_now_send(broadcastAddress, (uint8_t *)ack.c_str(), ack.length());
         DEBUG_PRINTLN("📤 ACK Sent: " + ack);
     }
+    // sendLedCommand(LED_PING_ACK);
 }
 
 void mesh_node_setup() {

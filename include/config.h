@@ -7,12 +7,14 @@ Preferences preferences;
 // #define Fast_LED 1
 // char newNodeID[16];
 
-#define Change_NODE_ID 1
+#define Change_NODE_ID 0
 
 #if Change_NODE_ID
-    char newNodeID[16] = "1225229";
+    char newNodeID[16] = "1225021"; // Set new Node ID if needed
 #endif
 const char* MasterID = "9999999"; // Set Master ID if needed
+
+bool isButtonPressed = false; // Global flag for button press state
 
 
 // ================= CONFIG =================

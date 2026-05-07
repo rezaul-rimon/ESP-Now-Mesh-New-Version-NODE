@@ -24,10 +24,10 @@ void smart_switch_setup() {
     // Restore switch states from Preferences
     preferences.begin("switches", false);  // Open Preferences
 
-    digitalWrite(SW_PIN1, preferences.getBool("sw1", false)); // Default: OFF
-    digitalWrite(SW_PIN2, preferences.getBool("sw2", false));
-    digitalWrite(SW_PIN3, preferences.getBool("sw3", false));
-    digitalWrite(SW_PIN4, preferences.getBool("sw4", false));
+    digitalWrite(SW_PIN1, preferences.getBool("sw1", true)); // Default: OFF
+    digitalWrite(SW_PIN2, preferences.getBool("sw2", true));
+    digitalWrite(SW_PIN3, preferences.getBool("sw3", true));
+    digitalWrite(SW_PIN4, preferences.getBool("sw4", true));
 
     preferences.end();
 }

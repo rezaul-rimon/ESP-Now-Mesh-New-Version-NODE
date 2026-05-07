@@ -14,8 +14,13 @@ void mainTask(void* parameter) {
   
   while(1){
 
-    if(millis() - lastHeartbeat > HB_INTERVAL) {
-    lastHeartbeat = millis();
+    if((millis() - lastHeartbeat > HB_INTERVAL) || (isButtonPressed == false && digitalRead(0) == LOW)) {
+    
+      lastHeartbeat = millis();
+
+    if(digitalRead(0)==LOW) {
+      isButtonPressed = true;
+    }
 
     Message hbmsg;
     hbmsg.sender_id = nodeID;
@@ -46,6 +51,11 @@ void mainTask(void* parameter) {
         DEBUG_PRINTLN("📤 Heartbeat Sent: " + nodePayload);
     }
     sendLedCommand(LED_HEARTBEAT);
+
+    if(digitalRead(0)==HIGH) {
+      isButtonPressed = false;
+    }
+
   }
 
     vTaskDelay(pdMS_TO_TICKS(1000));

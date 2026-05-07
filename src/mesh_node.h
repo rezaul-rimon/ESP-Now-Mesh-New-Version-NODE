@@ -234,6 +234,40 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
     //=========================================================
 
     //=============Set up ACK fields and send back================
+    if(command == "ping") {
+        // Just an example command to test ACKs
+        DEBUG_PRINTLN("Ping received");
+        Message hbmsg;
+        hbmsg.sender_id = nodeID;
+        hbmsg.receiver_id = "gw0";
+        hbmsg.command = "heartbeat/R:" + String(isRepeater ? "1" : "0");
+        hbmsg.type = MSG_HB;
+        hbmsg.msg_id = generateMessageID();
+        hbmsg.last_hop = nodeID;
+        hbmsg.hop_count = 0;
+
+        String nodePayload =
+            hbmsg.sender_id + "," +
+            hbmsg.receiver_id + "," +
+            hbmsg.command + "," +
+            String(hbmsg.type) + "," +
+            hbmsg.msg_id + "," +
+            hbmsg.last_hop + "," +
+            String(hbmsg.hop_count);
+
+        if(useEncryption) {
+            String encHb = encryptSimple(nodePayload, enckey);
+            esp_now_send(broadcastAddress, (uint8_t *)encHb.c_str(), encHb.length());
+            DEBUG_PRINTLN("📤 Heartbeat Sent: " + encHb);
+            DEBUG_PRINTLN("📤 Original Heartbeat: " + decryptSimple(encHb, enckey));
+        }
+        else {
+            esp_now_send(broadcastAddress, (uint8_t *)nodePayload.c_str(), nodePayload.length());
+            DEBUG_PRINTLN("📤 Heartbeat Sent: " + nodePayload);
+        }
+        sendLedCommand(LED_HEARTBEAT);
+    }
+    
     if(command == "repeater:1") {
         isRepeater = true;
         preferences.begin("device_config", false);

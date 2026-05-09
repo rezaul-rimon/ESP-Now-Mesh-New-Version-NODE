@@ -10,7 +10,7 @@ Preferences preferences;
 #define Change_NODE_ID 0
 
 #if Change_NODE_ID
-    char newNodeID[16] = "1225021"; // Set new Node ID if needed
+    char newNodeID[16] = "1225402"; // Set new Node ID if needed
 #endif
 const char* MasterID = "9999999"; // Set Master ID if needed
 
@@ -41,3 +41,4 @@ int MAX_HOPS;
 //     #define NUM_LEDS 1
 //     CRGB leds[NUM_LEDS];
 // #endif
+

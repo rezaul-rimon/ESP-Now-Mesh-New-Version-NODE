@@ -9,19 +9,7 @@ TaskHandle_t mainTaskHandle = NULL;
 #define MAIN_TASK_PRIORITY 1
 #define MAIN_TASK_STACK 16 * 1024
 
-void mainTask(void* parameter) {
-  HB_INTERVAL = HB_INTERVAL + random(0, 900); // Randomize heartbeat interval between 3-7 seconds for testing
-  
-  while(1){
-
-    if((millis() - lastHeartbeat > HB_INTERVAL) || (isButtonPressed == false && digitalRead(0) == LOW)) {
-    
-      lastHeartbeat = millis();
-
-    if(digitalRead(0)==LOW) {
-      isButtonPressed = true;
-    }
-
+void publisshHeartBeat(){
     Message hbmsg;
     hbmsg.sender_id = nodeID;
     hbmsg.receiver_id = "gw0";
@@ -51,6 +39,23 @@ void mainTask(void* parameter) {
         DEBUG_PRINTLN("📤 Heartbeat Sent: " + nodePayload);
     }
     sendLedCommand(LED_HEARTBEAT);
+}
+
+void mainTask(void* parameter) {
+  void publisshHeartBeat();
+  HB_INTERVAL = HB_INTERVAL + random(0, 900); // Randomize heartbeat interval between 3-7 seconds for testing
+  
+  while(1){
+
+    if((millis() - lastHeartbeat > HB_INTERVAL) || (isButtonPressed == false && digitalRead(0) == LOW)) {
+    
+      lastHeartbeat = millis();
+
+    if(digitalRead(0)==LOW) {
+      isButtonPressed = true;
+    }
+
+    publisshHeartBeat();
 
     if(digitalRead(0)==HIGH) {
       isButtonPressed = false;

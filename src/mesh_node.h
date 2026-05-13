@@ -13,7 +13,7 @@ typedef enum {
     MSG_CMD = 1,
     MSG_ACK,
     MSG_HB,
-    MSG_TMP
+    MSG_SD
 } message_type_t;
 
 struct Message {
@@ -36,10 +36,10 @@ String generateMessageID() {
 // Debug helper
 const char* getTypeName(message_type_t type) {
     switch(type) {
-        case MSG_CMD: return "CMD";
-        case MSG_ACK: return "ACK";
-        case MSG_HB: return "HEARTBEAT";
-        case MSG_TMP: return "SENSOR";
+        case MSG_CMD: return "Command";
+        case MSG_ACK: return "Acknowledgement";
+        case MSG_HB: return "Heartbeat";
+        case MSG_SD: return "Sendor Data";
         default: return "UNKNOWN";
     }
 }
@@ -234,40 +234,15 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
     //=========================================================
 
     //=============Set up ACK fields and send back================
-    if(command == "ping") {
-        // Just an example command to test ACKs
-        DEBUG_PRINTLN("Ping received");
-        Message hbmsg;
-        hbmsg.sender_id = nodeID;
-        hbmsg.receiver_id = "gw0";
-        hbmsg.command = "heartbeat/R:" + String(isRepeater ? "1" : "0");
-        hbmsg.type = MSG_HB;
-        hbmsg.msg_id = generateMessageID();
-        hbmsg.last_hop = nodeID;
-        hbmsg.hop_count = 0;
+    if(command == "ping" || command == "hb") {
+        publisshHeartBeat();
+    }
 
-        String nodePayload =
-            hbmsg.sender_id + "," +
-            hbmsg.receiver_id + "," +
-            hbmsg.command + "," +
-            String(hbmsg.type) + "," +
-            hbmsg.msg_id + "," +
-            hbmsg.last_hop + "," +
-            String(hbmsg.hop_count);
-
-        if(useEncryption) {
-            String encHb = encryptSimple(nodePayload, enckey);
-            esp_now_send(broadcastAddress, (uint8_t *)encHb.c_str(), encHb.length());
-            DEBUG_PRINTLN("📤 Heartbeat Sent: " + encHb);
-            DEBUG_PRINTLN("📤 Original Heartbeat: " + decryptSimple(encHb, enckey));
-        }
-        else {
-            esp_now_send(broadcastAddress, (uint8_t *)nodePayload.c_str(), nodePayload.length());
-            DEBUG_PRINTLN("📤 Heartbeat Sent: " + nodePayload);
-        }
-        sendLedCommand(LED_HEARTBEAT);
+    if(command == "sd"){
+        publishSensorData();
     }
     
+    //Repeater on/off
     if(command == "repeater:1") {
         isRepeater = true;
         preferences.begin("device_config", false);
@@ -283,6 +258,7 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
         sendLedCommand(LED_REPEATER_OFF);
     }
 
+    //Set Maximum Forwards
     if(command.startsWith("max_fwds:")) {
         MAX_FWDS = command.substring(9).toInt();
         if(MAX_FWDS <= 20 || MAX_FWDS > 500) {
@@ -293,6 +269,8 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
         preferences.end();
         sendLedCommand(LED_MAX_FWDS_SET);
     }
+
+    //Set Maximum Hops
     if(command.startsWith("max_hops:")) {
         MAX_HOPS = command.substring(9).toInt();
         if(MAX_HOPS <= 1 || MAX_HOPS > 100) {
@@ -303,6 +281,8 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
         preferences.end();
         sendLedCommand(LED_MAX_HOPS_SET);
     }
+
+    //Set Heartbeat Interval
     if(command.startsWith("hb_interval:")) {
         hb_interval = command.substring(12).toInt();
         if(hb_interval <= 1 || hb_interval > 1440) {
@@ -315,6 +295,7 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
         sendLedCommand(LED_HEARTBEAT_SET);
     }
 
+    //Set Encryption on/off
     if(command == "enc:1") {
         useEncryption = true;
         preferences.begin("device_config", false);
@@ -332,6 +313,96 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
         sendLedCommand(LED_REPEATER_OFF);
     }
 
+    //Set Light Dependent Node on/off
+    if(command == "lds:1") {
+        onOffByLDR = true;
+        preferences.begin("device_config", false);
+        preferences.putBool("lds", true);
+        preferences.end();
+
+        sendLedCommand(LED_REPEATER_ON);
+        publishSensorData();
+    }
+
+    if(command == "lds:0") {
+        onOffByLDR = false;
+        preferences.begin("device_config", false);
+        preferences.putBool("lds", false);
+        preferences.end();
+
+        sendLedCommand(LED_REPEATER_OFF);
+        publishSensorData();
+    }
+
+    //Set Node Dependent Light High and Low Value
+    if(command.startsWith("lds_high:")) {
+        ldrHighValue = command.substring(9).toInt();
+        if(ldrHighValue >= 100) {
+            ldrHighValue = 99; // sanity check
+        }
+
+        if(ldrHighValue <= ldrLowValue){
+            ldrHighValue = ldrLowValue - 1;
+        }
+        ldrHighValue = ldrHighValue * 40;
+
+        
+        preferences.begin("device_config", false);
+        preferences.putInt("ldsHigh", ldrHighValue);
+        preferences.end();
+        sendLedCommand(LED_MAX_FWDS_SET);
+    }
+
+    if(command.startsWith("lds_low:")) {
+        ldrLowValue = command.substring(8).toInt();
+        if(ldrLowValue <= 0) {
+            ldrLowValue = 1; // sanity check
+        }
+        if(ldrLowValue >= ldrHighValue){
+            ldrLowValue = ldrHighValue + 1;
+        }
+        ldrLowValue = ldrLowValue * 40;
+
+        
+        preferences.begin("device_config", false);
+        preferences.putInt("ldsLow", ldrLowValue);
+        preferences.end();
+        sendLedCommand(LED_MAX_FWDS_SET);
+    }
+
+    if(command == "ldr_rev:1"){
+        IS_LDR_REVERSE = true;
+
+        preferences.begin("device_config", false);
+        preferences.putBool("ldrRev", true);
+        preferences.end();
+
+        sendLedCommand(LED_REPEATER_ON);
+        publishSensorData();
+    }
+
+    if(command == "ldr_rev:0"){
+        IS_LDR_REVERSE = false;
+
+        preferences.begin("device_config", false);
+        preferences.putBool("ldrRev", false);
+        preferences.end();
+
+        sendLedCommand(LED_REPEATER_OFF);
+        publishSensorData();
+    }
+
+    //Set Node Dependent Light High and Low Value
+    if(command.startsWith("ct_ratio:")) {
+        CT_CALIB_FACTOR = command.substring(9).toFloat();
+        
+        preferences.begin("device_config", false);
+        preferences.putFloat("ctRatio", CT_CALIB_FACTOR);
+        preferences.end();
+        sendLedCommand(LED_MAX_FWDS_SET);
+        publishSensorData();
+    }
+
     // Handle switch commands
     //============================================================//
 
@@ -346,6 +417,7 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
 
     // ================= SEND ACK =================
     delay(random(70, 271));
+
     String ack =
         String(nodeID) + "," +
         sender + "," +

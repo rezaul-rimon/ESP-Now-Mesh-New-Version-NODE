@@ -3,85 +3,291 @@
 #include "mesh_node.h"
 #include "led.h"
 #include "smart_switch.h"
+#include "sensors.h"
 
 TaskHandle_t mainTaskHandle = NULL;
 
 #define MAIN_TASK_PRIORITY 1
 #define MAIN_TASK_STACK 16 * 1024
 
-void publisshHeartBeat(){
-    Message hbmsg;
-    hbmsg.sender_id = nodeID;
-    hbmsg.receiver_id = "gw0";
-    hbmsg.command = "heartbeat/R:" + String(isRepeater ? "1" : "0");
-    hbmsg.type = MSG_HB;
-    hbmsg.msg_id = generateMessageID();
-    hbmsg.last_hop = nodeID;
-    hbmsg.hop_count = 0;
+void publisshHeartBeat()
+{
+  
+  Message hbmsg;
+  hbmsg.sender_id = nodeID;
+  hbmsg.receiver_id = "gw0";
+  hbmsg.command = "heartbeat/R:" +
+                  String(isRepeater ? "1" : "0");
+  hbmsg.type = MSG_HB;
+  hbmsg.msg_id = generateMessageID();
+  hbmsg.last_hop = nodeID;
+  hbmsg.hop_count = 0;
 
-    String nodePayload =
-        hbmsg.sender_id + "," +
-        hbmsg.receiver_id + "," +
-        hbmsg.command + "," +
-        String(hbmsg.type) + "," +
-        hbmsg.msg_id + "," +
-        hbmsg.last_hop + "," +
-        String(hbmsg.hop_count);
+  String nodePayload =
+      hbmsg.sender_id + "," +
+      hbmsg.receiver_id + "," +
+      hbmsg.command + "," +
+      String(hbmsg.type) + "," +
+      hbmsg.msg_id + "," +
+      hbmsg.last_hop + "," +
+      String(hbmsg.hop_count);
 
-    if(useEncryption) {
-        String encHb = encryptSimple(nodePayload, enckey);
-        esp_now_send(broadcastAddress, (uint8_t *)encHb.c_str(), encHb.length());
-        DEBUG_PRINTLN("📤 Heartbeat Sent: " + encHb);
-        DEBUG_PRINTLN("📤 Original Heartbeat: " + decryptSimple(encHb, enckey));
-    }
-    else {
-        esp_now_send(broadcastAddress, (uint8_t *)nodePayload.c_str(), nodePayload.length());
-        DEBUG_PRINTLN("📤 Heartbeat Sent: " + nodePayload);
-    }
-    sendLedCommand(LED_HEARTBEAT);
+  nodePayload.replace(" ", "");
+
+  if (useEncryption)
+  {
+    String encHb = encryptSimple(nodePayload, enckey);
+    esp_now_send(broadcastAddress, (uint8_t *)encHb.c_str(), encHb.length());
+    DEBUG_PRINTLN("📤 Heartbeat Sent: " + encHb);
+    DEBUG_PRINTLN("📤 Original Heartbeat: " + decryptSimple(encHb, enckey));
+  }
+  else
+  {
+    esp_now_send(broadcastAddress, (uint8_t *)nodePayload.c_str(), nodePayload.length());
+    DEBUG_PRINTLN("📤 Heartbeat Sent: " + nodePayload);
+  }
+  sendLedCommand(LED_HEARTBEAT);
 }
 
-void mainTask(void* parameter) {
-  void publisshHeartBeat();
-  HB_INTERVAL = HB_INTERVAL + random(0, 900); // Randomize heartbeat interval between 3-7 seconds for testing
-  
-  while(1){
+void publishSensorData()
+{
+  float avgTemp = 0;
+  float avgIrms = 0;
+  float avgWatt = 0;
+  float avgLdr = 0;
+  float avgLightIntensity = 0;
 
-    if((millis() - lastHeartbeat > HB_INTERVAL) || (isButtonPressed == false && digitalRead(0) == LOW)) {
-    
+  const int samples = 10;
+
+  for (int i = 0; i < samples; i++)
+  {
+    // ===== TEMPERATURE =====
+    if (shtInitialized)
+    {
+      float temperature = readTemperature().toFloat();
+      avgTemp += temperature;
+    }
+
+    // ===== CURRENT =====
+    double Irms = emon1.calcIrms(1480);
+    float watt = 230.0 * Irms;
+
+    avgIrms += Irms;
+    avgWatt += watt;
+
+    // ===== LDR =====
+    int ldr = analogRead(LDR_PIN);
+
+    if(IS_LDR_REVERSE == true){
+      ldr = 4095 - ldr;
+    }
+
+    float light_intensity = ldr / 40.95;
+
+    avgLdr += ldr;
+    avgLightIntensity += light_intensity;
+
+    // 10 samples in ~5 second
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
+
+  // ===== FINAL AVERAGE =====
+  avgIrms /= samples;
+  avgWatt /= samples;
+  avgLdr /= samples;
+  avgLightIntensity /= samples;
+
+  if (shtInitialized)
+  {
+    avgTemp /= samples;
+  }
+
+  // ===== PRINT =====
+  if (shtInitialized)
+  {
+    Serial.println("Temperature: " + String(avgTemp, 1));
+  }
+  else
+  {
+    Serial.println("Temperature: N/A");
+  }
+
+  Serial.println("I= " + String(avgIrms, 2) +
+                  " W= " + String(avgWatt, 2));
+
+  Serial.println("LDR: " + String(avgLdr, 1));
+
+  Serial.println("light_intensity: " +
+                  String(avgLightIntensity, 1));
+
+  Serial.println();
+
+  preferences.begin("switches", false);  // Open Preferences
+
+  bool sw1 = preferences.getBool("sw1", true);
+
+  preferences.end();
+
+  Message sdMsg;
+  sdMsg.sender_id = nodeID;
+  sdMsg.receiver_id = "gw0";
+  sdMsg.command = "sd/W:" + String(avgWatt,0) +
+                  "/L:" + String(avgLightIntensity,0) +
+                  "/T:" + String(avgTemp,1) +
+                  "/Tg:0"+
+                  "/LDS:"+String(onOffByLDR ? "1" : "0")+
+                  "/sw1:"+String(sw1 ? "1" : "0");
+  sdMsg.type = MSG_SD;
+  sdMsg.msg_id = generateMessageID();
+  sdMsg.last_hop = nodeID;
+  sdMsg.hop_count = 0;
+
+  String nodePayload =
+      sdMsg.sender_id + "," +
+      sdMsg.receiver_id + "," +
+      sdMsg.command + "," +
+      String(sdMsg.type) + "," +
+      sdMsg.msg_id + "," +
+      sdMsg.last_hop + "," +
+      String(sdMsg.hop_count);
+
+  nodePayload.replace(" ", "");
+
+  if (useEncryption)
+  {
+    String encHb = encryptSimple(nodePayload, enckey);
+    esp_now_send(broadcastAddress, (uint8_t *)encHb.c_str(), encHb.length());
+    DEBUG_PRINTLN("📤 Heartbeat Sent: " + encHb);
+    DEBUG_PRINTLN("📤 Original Heartbeat: " + decryptSimple(encHb, enckey));
+  }
+  else
+  {
+    esp_now_send(broadcastAddress, (uint8_t *)nodePayload.c_str(), nodePayload.length());
+    DEBUG_PRINTLN("📤 Heartbeat Sent: " + nodePayload);
+  }
+  sendLedCommand(LED_HEARTBEAT);
+}
+
+//==========================================================//
+//===================== Main Task ==========================//
+//==========================================================//
+
+void mainTask(void *parameter)
+{
+  // void publisshHeartBeat();
+  HB_INTERVAL = HB_INTERVAL + random(0, 900); // Randomize heartbeat interval between 3-7 seconds for testing
+
+  while (1)
+  {
+
+    if ((millis() - lastHeartbeat > HB_INTERVAL) || (isButtonPressed == false && digitalRead(0) == LOW))
+    {
+
       lastHeartbeat = millis();
 
-    if(digitalRead(0)==LOW) {
-      isButtonPressed = true;
+      if (digitalRead(0) == LOW)
+      {
+        isButtonPressed = true;
+      }
+
+      //===============================================//
+      publisshHeartBeat();
+
+      // 🔴 Handle sensor reinitialization & LED blinking if not ready
+      if (!shtInitialized)
+      {
+        static unsigned long lastAttempt = 0;
+        static unsigned long lastBlink = 0;
+        static bool ledOn = false;
+
+        // 🔄 Retry sensor init every 10 seconds
+        if (millis() - lastAttempt > 10000)
+        {
+          Serial.println("🔄 Retrying SHT3x init...");
+          if (sht.begin(0x44))
+          {
+            shtInitialized = true;
+            Serial.println("✅ SHT3x initialized during loop.");
+            leds[0] = CRGB::Green;
+            FastLED.show();
+            delay(1000);
+            leds[0] = CRGB::Black;
+            FastLED.show();
+          }
+          lastAttempt = millis();
+        }
+        // 🔴 Blink red LED every 500ms
+      }
+
+      vTaskDelay(pdMS_TO_TICKS(100));
+
+      publishSensorData();
+
+      //===============================================//
+
+      if (digitalRead(0) == HIGH)
+      {
+        isButtonPressed = false;
+      }
+    }
+    //===================================================//
+
+    static bool lastState = false;
+    bool currentState;
+
+    if (onOffByLDR)
+    {
+        int ldr = analogRead(LDR_PIN);
+        if(IS_LDR_REVERSE == true){
+          ldr = 4095 - ldr;
+        }
+
+        if (ldr < ldrLowValue)
+        {
+            currentState = true;
+        }
+        else if (ldr > ldrHighValue)
+        {
+            currentState = false;
+        }
+        else
+        {
+            currentState = lastState;
+        }
+
+        // State changed?
+        if (currentState != lastState)
+        {
+            if (currentState)
+            {
+              Serial.println("LDR: "+String(ldr));
+              Serial.println("LDR -> ON");
+              handleSwitches("sw1:1");
+            }
+            else
+            {
+              Serial.println("LDR: "+String(ldr));
+              Serial.println("LDR -> OFF");
+              handleSwitches("sw1:0");
+            }
+
+            // publishSensorData();
+
+            // Update AFTER action
+            lastState = currentState;
+        }
     }
 
-    publisshHeartBeat();
-
-    if(digitalRead(0)==HIGH) {
-      isButtonPressed = false;
-    }
-
-  }
+    
 
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }
 
 // ================= SETUP =================
-void setup() {
+void setup()
+{
   Serial.begin(115200);
-
-  #if Fast_LED
-    FastLED.addLeds<NEOPIXEL, LED_PIN>(leds, NUM_LEDS);
-    leds[0] = CRGB::Yellow;
-    FastLED.show();
-    delay(500);
-    leds[0] = CRGB::Green;
-    FastLED.show();
-    delay(500);
-    leds[0] = CRGB::Black;
-    FastLED.show();
-  #endif
 
   FastLED_setup();
 
@@ -89,9 +295,10 @@ void setup() {
 
   #if Change_NODE_ID
     String newIDStr(newNodeID);
-    if(newIDStr.length() > 0 && newIDStr.length() < sizeof(nodeID)) {
-        preferences.putString("node_id", newIDStr);
-        Serial.printf("Node ID set to: %s\n", newIDStr.c_str());
+    if (newIDStr.length() > 0 && newIDStr.length() < sizeof(nodeID))
+    {
+      preferences.putString("node_id", newIDStr);
+      Serial.printf("Node ID set to: %s\n", newIDStr.c_str());
     }
   #endif
 
@@ -101,23 +308,34 @@ void setup() {
   MAX_HOPS = preferences.getInt("max_hops", 5);
   hb_interval = preferences.getInt("hb_interval", 5);
   HB_INTERVAL = hb_interval * 60 * 1000;
-        // preferences.putBool("use_encryption", false);
+  // preferences.putBool("use_encryption", false);
   useEncryption = preferences.getBool("use_encryption", false);
+
+  onOffByLDR = preferences.getBool("lds", false);
+  ldrLowValue = preferences.getInt("ldsLow", 40*40);
+  ldrHighValue = preferences.getInt("ldsHigh", 80*40);
+  IS_LDR_REVERSE = preferences.getBool("ldrRev", false);
+  CT_CALIB_FACTOR = preferences.getFloat("ctRatio", 1.25);
+
 
   preferences.end();
 
   strncpy(nodeID, node_id.c_str(), sizeof(nodeID));
-  nodeID[sizeof(nodeID)-1] = '\0';
+  nodeID[sizeof(nodeID) - 1] = '\0';
 
   smart_switch_setup();
   mesh_node_setup();
+  sht3x_sensor_setup();
+  ct_setup();
+  ldr_setup();
 
-  Serial.printf("✅ Node %s ready | repeater=%d | hb_interval=%d | max_fwds=%d | max_hops=%d | useEncryption=%d\n", nodeID, isRepeater, hb_interval, MAX_FWDS, MAX_HOPS, useEncryption);
+  Serial.printf("✅ Node %s ready | repeater=%d | hb_interval=%d \n max_fwds=%d | max_hops=%d | useEncryption=%d \n LDS=%d | LDR_High=%d | LDR_Low=%d \n LDR Reverse=%d | CT_Ratio=%f\n", nodeID, isRepeater, hb_interval, MAX_FWDS, MAX_HOPS, useEncryption, onOffByLDR, ldrHighValue, ldrLowValue, IS_LDR_REVERSE, CT_CALIB_FACTOR);
 
   xTaskCreatePinnedToCore(mainTask, "MainTask", MAIN_TASK_STACK, NULL, MAIN_TASK_PRIORITY, &mainTaskHandle, 0);
 }
 
 // ================= LOOP =================
-void loop() {
+void loop()
+{
   vTaskDelay(pdMS_TO_TICKS(100));
 }

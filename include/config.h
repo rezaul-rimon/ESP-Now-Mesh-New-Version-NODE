@@ -8,9 +8,21 @@ Preferences preferences;
 // char newNodeID[16];
 
 #define Change_NODE_ID 0
+#define USE_LDR
+#define USE_CT
+#define USE_SHT_TMP
+bool IS_LDR_REVERSE;
+float CT_CALIB_FACTOR;
+
+void publisshHeartBeat();
+void publishSensorData();
+
+bool onOffByLDR;
+int ldrLowValue;
+int ldrHighValue;
 
 #if Change_NODE_ID
-    char newNodeID[16] = "1225402"; // Set new Node ID if needed
+    char newNodeID[16] = "1225266"; // Set new Node ID if needed
 #endif
 const char* MasterID = "9999999"; // Set Master ID if needed
 

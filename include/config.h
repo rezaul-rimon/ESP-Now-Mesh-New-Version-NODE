@@ -22,7 +22,7 @@ int ldrLowValue;
 int ldrHighValue;
 
 #if Change_NODE_ID
-    char newNodeID[16] = "1225266"; // Set new Node ID if needed
+    char newNodeID[16] = "1225267"; // Set new Node ID if needed
 #endif
 const char* MasterID = "9999999"; // Set Master ID if needed
 

@@ -51,23 +51,18 @@ void publisshHeartBeat()
 
 void publishSensorData()
 {
-  float avgTemp = 0;
+  float temperature = 0;
   float avgIrms = 0;
   float avgWatt = 0;
   float avgLdr = 0;
   float avgLightIntensity = 0;
 
+  temperature = ntcSensor.readTemperature();
+  
   const int samples = 10;
 
   for (int i = 0; i < samples; i++)
   {
-    // ===== TEMPERATURE =====
-    if (shtInitialized)
-    {
-      float temperature = readTemperature().toFloat();
-      avgTemp += temperature;
-    }
-
     // ===== CURRENT =====
     double Irms = emon1.calcIrms(1480);
     float watt = 230.0 * Irms;
@@ -97,20 +92,7 @@ void publishSensorData()
   avgLdr /= samples;
   avgLightIntensity /= samples;
 
-  if (shtInitialized)
-  {
-    avgTemp /= samples;
-  }
-
-  // ===== PRINT =====
-  if (shtInitialized)
-  {
-    Serial.println("Temperature: " + String(avgTemp, 1));
-  }
-  else
-  {
-    Serial.println("Temperature: N/A");
-  }
+  Serial.println("Temperature: " + String(temperature, 1));
 
   Serial.println("I= " + String(avgIrms, 2) +
                   " W= " + String(avgWatt, 2));
@@ -133,7 +115,7 @@ void publishSensorData()
   sdMsg.receiver_id = "gw0";
   sdMsg.command = "sd/W:" + String(avgWatt,0) +
                   "/L:" + String(avgLightIntensity,0) +
-                  "/T:" + String(avgTemp,1) +
+                  "/T:" + String(temperature,1) +
                   "/Tg:0"+
                   "/LDS:"+String(onOffByLDR ? "1" : "0")+
                   "/sw1:"+String(sw1 ? "1" : "0");
@@ -307,7 +289,7 @@ void setup()
   MAX_FWDS = preferences.getInt("max_fwds", 50);
   MAX_HOPS = preferences.getInt("max_hops", 5);
   hb_interval = preferences.getInt("hb_interval", 5);
-  HB_INTERVAL = hb_interval * 60 * 1000;
+  HB_INTERVAL = hb_interval * 4 * 1000;
   // preferences.putBool("use_encryption", false);
   useEncryption = preferences.getBool("use_encryption", false);
 
@@ -325,7 +307,7 @@ void setup()
 
   smart_switch_setup();
   mesh_node_setup();
-  sht3x_sensor_setup();
+  // sht3x_sensor_setup();
   ct_setup();
   ldr_setup();
 

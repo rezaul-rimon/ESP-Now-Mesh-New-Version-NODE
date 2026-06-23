@@ -20,141 +20,164 @@ WebServer server(80);
 
 //=============== PUBLISH HEARTBEAT =================
 void publisshHeartBeat() {
-  
-  Message hbmsg;
-  hbmsg.sender_id = nodeID;
-  hbmsg.receiver_id = "gw0";
-  hbmsg.command = "heartbeat/R:" +
-                  String(isRepeater ? "1" : "0");
-  hbmsg.type = MSG_HB;
-  hbmsg.msg_id = generateMessageID();
-  hbmsg.last_hop = nodeID;
-  hbmsg.hop_count = 0;
+  char command[48];
 
-  String nodePayload =
-      hbmsg.sender_id + "," +
-      hbmsg.receiver_id + "," +
-      hbmsg.command + "," +
-      String(hbmsg.type) + "," +
-      hbmsg.msg_id + "," +
-      hbmsg.last_hop + "," +
-      String(hbmsg.hop_count);
+  snprintf(
+    command,
+    sizeof(command),
+    "heartbeat/R:%s",
+    isRepeater ? "1" : "0"
+  );
 
-  nodePayload.replace(" ", "");
+  char nodePayload[ESPNOW_MAX_MSG_LEN + 1];
 
-  if (useEncryption)
-  {
-    String encHb = encryptSimple(nodePayload, enckey);
-    esp_now_send(broadcastAddress, (uint8_t *)encHb.c_str(), encHb.length());
-    DEBUG_PRINTLN("📤 Heartbeat Sent: " + encHb);
-    DEBUG_PRINTLN("📤 Original Heartbeat: " + decryptSimple(encHb, enckey));
+  snprintf(
+    nodePayload,
+    sizeof(nodePayload),
+    "%s,%s,%s,%d,%s,%s,%d",
+    nodeID,
+    "gw0",
+    command,
+    MSG_HB,
+    generateMessageID(),   // ⚠️ see note below
+    nodeID,
+    0
+  );
+
+  if (useEncryption) {
+    char encHb[ESPNOW_MAX_MSG_LEN + 1];
+
+    encryptSimple(nodePayload, encHb, enckey);
+
+    esp_now_send(
+      broadcastAddress,
+      (uint8_t*)encHb,
+      strlen(encHb)
+    );
+
+    DEBUG_PRINTLN(encHb);
   }
-  else
-  {
-    esp_now_send(broadcastAddress, (uint8_t *)nodePayload.c_str(), nodePayload.length());
-    DEBUG_PRINTLN("📤 Heartbeat Sent: " + nodePayload);
+  else {
+    esp_now_send(
+      broadcastAddress,
+      (uint8_t*)nodePayload,
+      strlen(nodePayload)
+    );
+
+    DEBUG_PRINTLN("HeartBeat: " + String(nodePayload));
+    sendLedCommand(LED_HEARTBEAT);
   }
-  sendLedCommand(LED_HEARTBEAT);
 }
 
 // ================= PUBLISH SENSOR DATA =================
 void publishSensorData() {
-  float temperature = 0;
-  float avgIrms = 0;
-  float avgWatt = 0;
+  float temperature = ntcSensor.readTemperature();
+
+  const int samples = 10;
+
+  double avgIrms = 0;
+  double avgWatt = 0;
   float avgLdr = 0;
   float avgLightIntensity = 0;
 
-  temperature = ntcSensor.readTemperature();
-  
-  const int samples = 10;
-
   for (int i = 0; i < samples; i++)
   {
-    // ===== CURRENT =====
-    double Irms = emon1.calcIrms(1480);
-    float watt = 230.0 * Irms;
+      double Irms = emon1.calcIrms(1480);
+      float watt = 230.0 * Irms;
 
-    avgIrms += Irms;
-    avgWatt += watt;
+      avgIrms += Irms;
+      avgWatt += watt;
 
-    // ===== LDR =====
-    int ldr = analogRead(LDR_PIN);
+      int ldr = analogRead(LDR_PIN);
 
-    if(IS_LDR_REVERSE == true){
-      ldr = 4095 - ldr;
-    }
+      if (IS_LDR_REVERSE)
+      {
+          ldr = 4095 - ldr;
+      }
 
-    float light_intensity = ldr / 40.95;
+      float light_intensity = ldr / 40.95;
 
-    avgLdr += ldr;
-    avgLightIntensity += light_intensity;
+      avgLdr += ldr;
+      avgLightIntensity += light_intensity;
 
-    // 10 samples in ~5 second
-    vTaskDelay(pdMS_TO_TICKS(500));
+      vTaskDelay(pdMS_TO_TICKS(500));
   }
 
-  // ===== FINAL AVERAGE =====
   avgIrms /= samples;
   avgWatt /= samples;
   avgLdr /= samples;
   avgLightIntensity /= samples;
 
-  DEBUG_PRINTLN("Temperature: " + String(temperature, 1));
+  DEBUG_PRINTLN("T: " + String(temperature));
+  DEBUG_PRINTLN("I: " + String(avgIrms));
+  DEBUG_PRINTLN("W: " + String(avgWatt));
+  DEBUG_PRINTLN("LDR: " + String(avgLdr));
+  DEBUG_PRINTLN("Light: " + String(avgLightIntensity));
 
-  DEBUG_PRINTLN("I= " + String(avgIrms, 2) +
-                  " W= " + String(avgWatt, 2));
-
-  DEBUG_PRINTLN("LDR: " + String(avgLdr, 1));
-
-  DEBUG_PRINTLN("light_intensity: " +
-                  String(avgLightIntensity, 1));
-
-  DEBUG_PRINTLN();
-
-  preferences.begin("switches", false);  // Open Preferences
-
+  preferences.begin("switches", false);
   bool sw1 = preferences.getBool("sw1", true);
-
   preferences.end();
 
-  Message sdMsg;
-  sdMsg.sender_id = nodeID;
-  sdMsg.receiver_id = "gw0";
-  sdMsg.command = "sd/W:" + String(avgWatt,0) +
-                  "/L:" + String(avgLightIntensity,0) +
-                  "/T:" + String(temperature,1) +
-                  "/Tg:0"+
-                  "/LDS:"+String(onOffByLDR ? "1" : "0")+
-                  "/sw1:"+String(sw1 ? "1" : "0");
-  sdMsg.type = MSG_SD;
-  sdMsg.msg_id = generateMessageID();
-  sdMsg.last_hop = nodeID;
-  sdMsg.hop_count = 0;
+  // ================= BUILD COMMAND (NO STRING) =================
+  char command[128];
 
-  String nodePayload =
-      sdMsg.sender_id + "," +
-      sdMsg.receiver_id + "," +
-      sdMsg.command + "," +
-      String(sdMsg.type) + "," +
-      sdMsg.msg_id + "," +
-      sdMsg.last_hop + "," +
-      String(sdMsg.hop_count);
+  snprintf(
+      command,
+      sizeof(command),
+      "sd/W:%.0f/L:%.0f/T:%.1f/Tg:0/LDS:%d/sw1:%d",
+      avgWatt,
+      avgLightIntensity,
+      temperature,
+      onOffByLDR ? 1 : 0,
+      sw1 ? 1 : 0
+  );
 
-  nodePayload.replace(" ", "");
+  // ================= MESSAGE ID (NO String function) =================
+  char msg_id[8];
+  snprintf(msg_id, sizeof(msg_id), "%04X", esp_random() & 0xFFFF);
 
+  // ================= BUILD FINAL PACKET =================
+  char nodePayload[ESPNOW_MAX_MSG_LEN + 1];
+
+  snprintf(
+      nodePayload,
+      sizeof(nodePayload),
+      "%s,%s,%s,%d,%s,%s,%d",
+      nodeID,
+      "gw0",
+      command,
+      MSG_SD,
+      msg_id,
+      nodeID,
+      0
+  );
+
+  // ================= SEND =================
   if (useEncryption)
   {
-    String encHb = encryptSimple(nodePayload, enckey);
-    esp_now_send(broadcastAddress, (uint8_t *)encHb.c_str(), encHb.length());
-    DEBUG_PRINTLN("📤 Heartbeat Sent: " + encHb);
-    DEBUG_PRINTLN("📤 Original Heartbeat: " + decryptSimple(encHb, enckey));
+      char encPayload[ESPNOW_MAX_MSG_LEN + 1];
+
+      encryptSimple(nodePayload, encPayload, enckey);
+
+      esp_now_send(
+          broadcastAddress,
+          (uint8_t *)encPayload,
+          strlen(encPayload)
+      );
+
+      DEBUG_PRINTLN(encPayload);
   }
   else
   {
-    esp_now_send(broadcastAddress, (uint8_t *)nodePayload.c_str(), nodePayload.length());
-    DEBUG_PRINTLN("📤 Heartbeat Sent: " + nodePayload);
+      esp_now_send(
+          broadcastAddress,
+          (uint8_t *)nodePayload,
+          strlen(nodePayload)
+      );
+
+      DEBUG_PRINTLN("SensorData: " + String(nodePayload));
   }
+
   sendLedCommand(LED_HEARTBEAT);
 }
 

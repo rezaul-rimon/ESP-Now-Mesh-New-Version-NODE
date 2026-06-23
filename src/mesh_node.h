@@ -17,13 +17,19 @@ bool needAck = false;
 uint8_t broadcastAddress[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 
 // ================= DEDUPLICATION =================
-std::deque<String> recentMsgKeys;
+struct MsgKey {
+    char sender[10];
+    uint8_t type;
+    char msg_id[6];
+};
+
+std::deque<MsgKey> recentMsgKeys;
 const size_t maxRecentIDs = 200; // Can be made configurable via Preferences
 
 //================= ENCRYPTION =================
 bool useEncryption = false;
-String enckey = "dmabd987";
-String encCharset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+=[]{}|:;<>?,./~";
+const char enckey[] = "dmabd987";
+const char encCharset[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+=[]{}|:;<>?,./~";
 
 // ================= MESSAGE ENUM =================
 typedef enum {
@@ -35,20 +41,19 @@ typedef enum {
 
 //================= MESSAGE STRUCTURE =================
 struct Message {
-    String sender_id;
-    String receiver_id;
-    String command;
-    message_type_t type;
-    String msg_id;
-    String last_hop;
+    char sender_id[10];
+    char receiver_id[10];
+    char command[40];
+    uint8_t type;
+    char msg_id[6];
+    char last_hop[10];
     uint8_t hop_count;
 };
 
 // ================= ESP-NOW RECEIVE STRUCTURE =================
-struct EspNowRxMessage
-{
+struct EspNowRxMessage {
     int len;
-    char data[ESPNOW_MAX_MSG_LEN];
+    char data[ESPNOW_MAX_MSG_LEN + 1];
 };
 
 // ================= QUEUE AND TASK HANDLES =================
@@ -60,12 +65,17 @@ QueueHandle_t espNowRxQueue = NULL;
 //============= Function prototypes ================
 const char* getTypeName(message_type_t type);
 String generateMessageID();
-String encryptSimple(String msg, String enckey);
-String decryptSimple(String msg, String enckey);
-bool isDuplicate(const String& sender, message_type_t type, const String& msg_id);
-void rebroadcastIfNeeded(String sender, String receiver, String command,
-    message_type_t type, String msg_id,
-    String last_hop, int hop_count);
+void encryptSimple(const char* msg, char* out, const char* enckey);
+void decryptSimple(const char* msg, char* out, const char* enckey);
+bool isDuplicate(const char* sender, message_type_t type, const char* msg_id);
+void rebroadcastIfNeeded(
+    const char* sender,
+    const char* receiver,
+    const char* command,
+    message_type_t type,
+    const char* msg_id,
+    const char* last_hop,
+    int hop_count);
 void onReceive(const uint8_t *mac, const uint8_t *data, int len);
 void mesh_node_setup();
 void EspNowOnReceiveTask(void *pvParameters);
@@ -92,63 +102,110 @@ String generateMessageID() {
 }
 
 //================= ENCRYPTION FUNCTIONS =================
-String encryptSimple(String msg, String enckey) {
-    String out = "";
+void encryptSimple(const char* msg, char* out, const char* enckey) {
+    int msgLen = strlen(msg);
+    int keyLen = strlen(enckey);
+    int charsetLen = strlen(encCharset);
 
-    for (int i = 0; i < msg.length(); i++)
+    for (int i = 0; i < msgLen; i++)
     {
         char c = msg[i];
-        int index = encCharset.indexOf(c);
+        int index = -1;
 
-        if (index == -1) {
-            out += c; // keep delimiters like , / - & %
+        // find char in charset
+        for (int j = 0; j < charsetLen; j++)
+        {
+            if (encCharset[j] == c)
+            {
+                index = j;
+                break;
+            }
+        }
+
+        if (index == -1)
+        {
+            out[i] = c;   // keep delimiters
             continue;
         }
 
-        int shift = enckey[i % enckey.length()] + i;
-        int newIndex = (index + shift) % encCharset.length();
-        out += encCharset[newIndex];
+        int shift = enckey[i % keyLen] + i;
+        int newIndex = (index + shift) % charsetLen;
+
+        out[i] = encCharset[newIndex];
     }
 
-    return out;
+    out[msgLen] = '\0';
 }
 
 //================= DECRYPTION FUNCTIONS =================
-String decryptSimple(String msg, String enckey) {
-    String out = "";
+void decryptSimple(const char* msg, char* out, const char* enckey) {
+    int msgLen = strlen(msg);
+    int keyLen = strlen(enckey);
+    int charsetLen = strlen(encCharset);
 
-    for (int i = 0; i < msg.length(); i++)
+    for (int i = 0; i < msgLen; i++)
     {
         char c = msg[i];
-        int index = encCharset.indexOf(c);
+        int index = -1;
 
-        if (index == -1) {
-            out += c;
+        for (int j = 0; j < charsetLen; j++)
+        {
+            if (encCharset[j] == c)
+            {
+                index = j;
+                break;
+            }
+        }
+
+        if (index == -1)
+        {
+            out[i] = c;
             continue;
         }
 
-        int shift = enckey[i % enckey.length()] + i;
+        int shift = enckey[i % keyLen] + i;
         int newIndex = index - shift;
 
         while (newIndex < 0)
-            newIndex += encCharset.length();
+            newIndex += charsetLen;
 
-        out += encCharset[newIndex];
+        out[i] = encCharset[newIndex];
     }
 
-    return out;
+    out[msgLen] = '\0';
 }
 
 // ================= DEDUP =================
-bool isDuplicate(const String& sender, message_type_t type, const String& msg_id) {
-    String key = sender + ":" + String(type) + ":" + msg_id;
+bool isDuplicate(const char* sender, message_type_t type, const char* msg_id) {
+    MsgKey key;
 
-    if (std::find(recentMsgKeys.begin(), recentMsgKeys.end(), key) != recentMsgKeys.end()) {
-        return true;
+    strncpy(key.sender, sender, sizeof(key.sender));
+    key.sender[sizeof(key.sender) - 1] = '\0';
+
+    key.type = type;
+
+    strncpy(key.msg_id, msg_id, sizeof(key.msg_id));
+    key.msg_id[sizeof(key.msg_id) - 1] = '\0';
+
+    // search in deque
+    for (auto &k : recentMsgKeys)
+    {
+        if (
+            strcmp(k.sender, key.sender) == 0 &&
+            k.type == key.type &&
+            strcmp(k.msg_id, key.msg_id) == 0
+        )
+        {
+            DEBUG_PRINTLN("Duplicate: " + String(k.sender) +":"+ String(k.type) +":"+ String(k.msg_id));
+            return true;
+        }
     }
 
+    // insert new
     recentMsgKeys.push_back(key);
-    if (recentMsgKeys.size() > maxRecentIDs) {
+
+    if (recentMsgKeys.size() > maxRecentIDs)
+    {
         recentMsgKeys.pop_front();
     }
 
@@ -156,23 +213,22 @@ bool isDuplicate(const String& sender, message_type_t type, const String& msg_id
 }
 
 // ================= REBROADCAST =================
-void rebroadcastIfNeeded(String sender, String receiver, String command,
-    message_type_t type, String msg_id,
-    String last_hop, int hop_count) {
+void rebroadcastIfNeeded(
+    const char* sender,
+    const char* receiver,
+    const char* command,
+    message_type_t type,
+    const char* msg_id,
+    const char* last_hop,
+    int hop_count) {
 
-    //No rebroadcast if the node is not a repeater
     if (!isRepeater) return;
 
-    //No rebroadcast if this message was sent by me
-    if (sender == nodeID) return;
+    if (strcmp(sender, nodeID) == 0) return;
 
-    //No rebroadcast if I the last hop is me (prevents loops)
-    if (last_hop == nodeID) return;
+    if (strcmp(last_hop, nodeID) == 0) return;
 
-    // if (type == MSG_CMD && receiver == nodeID) return;
-
-    //No rebroadcast if th receiver is me
-    if (receiver == nodeID) return;
+    if (strcmp(receiver, nodeID) == 0) return;
 
     //No rebroadcast if then maximum hops have been reached
     if (hop_count >= MAX_HOPS) {
@@ -180,29 +236,46 @@ void rebroadcastIfNeeded(String sender, String receiver, String command,
         return;
     }
 
-    // Update routing fields
-    hop_count++;
-    String new_last_hop = String(nodeID);
-
-    String newMsg =
-        sender + "," +
-        receiver + "," +
-        command + "," +
-        String(type) + "," +
-        msg_id + "," +
-        new_last_hop + "," +
-        String(hop_count);
-
     delay(random(20, 70));
 
-    if(useEncryption) {
-        String encNewMsg = encryptSimple(newMsg, enckey);
-        esp_now_send(broadcastAddress, (uint8_t *)encNewMsg.c_str(), encNewMsg.length());
-        DEBUG_PRINTLN("🔁 Rebroadcast: " + encNewMsg);
-        DEBUG_PRINTLN("🔁 Original Msg: " + decryptSimple(encNewMsg, enckey));
-    } else {
-        esp_now_send(broadcastAddress, (uint8_t *)newMsg.c_str(), newMsg.length());
-        DEBUG_PRINTLN("🔁 Rebroadcast: " + newMsg);
+    // Update routing fields
+    char newMsg[ESPNOW_MAX_MSG_LEN + 1];
+
+    snprintf(
+        newMsg,
+        sizeof(newMsg),
+        "%s,%s,%s,%d,%s,%s,%d",
+        sender,
+        receiver,
+        command,
+        (int)type,
+        msg_id,
+        nodeID,   // new_last_hop = nodeID
+        hop_count + 1
+    );
+
+    char encNewMsg[ESPNOW_MAX_MSG_LEN + 1];
+
+    if (useEncryption)
+    {
+        char encNewMsg[ESPNOW_MAX_MSG_LEN + 1];
+        encryptSimple(newMsg, encNewMsg, enckey);
+        DEBUG_PRINTLN("Rebrodcasted: " +String(encNewMsg));
+
+        esp_now_send(
+            broadcastAddress,
+            (uint8_t *)encNewMsg,
+            strlen(encNewMsg)
+        );
+    }
+    else
+    {
+        DEBUG_PRINTLN("Rebrodcasted: " +String(newMsg));
+        esp_now_send(
+            broadcastAddress,
+            (uint8_t *)newMsg,
+            strlen(newMsg)
+        );
     }
 }
 
@@ -293,10 +366,25 @@ void EspNowOnReceiveTask(void *pvParameters) {
         )
         {
             //Start processing the received message
-            String msg = String(rxMsg.data);
+            // String msg = String(rxMsg.data);
+            char msg[ESPNOW_MAX_MSG_LEN + 1];
+
+            int len = rxMsg.len;
+            if (len > ESPNOW_MAX_MSG_LEN) len = ESPNOW_MAX_MSG_LEN;
+
+            memcpy(msg, rxMsg.data, len);
+            msg[len] = '\0';
 
             // Expect 7 fields (6 commas)
-            int commas = std::count(msg.begin(), msg.end(), ',');
+            // int commas = std::count(msg.begin(), msg.end(), ',');
+            int commas = 0;
+
+            for(int i = 0; msg[i] != '\0'; i++)
+            {
+                if(msg[i] == ',')
+                    commas++;
+            }
+
             if (commas != 6) {
                 // DEBUG_PRINTLN("❌ Invalid packet");
                 continue;
@@ -309,41 +397,79 @@ void EspNowOnReceiveTask(void *pvParameters) {
             DEBUG_PRINTLN();
             // DEBUG_PRINTLN("\n📥 " + msg);
 
-            int i1 = msg.indexOf(',');
-            int i2 = msg.indexOf(',', i1 + 1);
-            int i3 = msg.indexOf(',', i2 + 1);
-            int i4 = msg.indexOf(',', i3 + 1);
-            int i5 = msg.indexOf(',', i4 + 1);
-            int i6 = msg.indexOf(',', i5 + 1);
+            char *saveptr;
 
-            String sender    = msg.substring(0, i1);
-            String receiver  = msg.substring(i1 + 1, i2);
-            String command   = msg.substring(i2 + 1, i3);
-            message_type_t type = (message_type_t) msg.substring(i3 + 1, i4).toInt();
-            String msg_id    = msg.substring(i4 + 1, i5);
-            String last_hop  = msg.substring(i5 + 1, i6);
-            int hop_count    = msg.substring(i6 + 1).toInt();
+            char *sender =
+                strtok_r(msg, ",", &saveptr);
 
-            DEBUG_PRINTLN("Raw type: " + String(type));
-            DEBUG_PRINTLN("Type: " + String(getTypeName(type)));
+            char *receiver =
+                strtok_r(NULL, ",", &saveptr);
+
+            char *command =
+                strtok_r(NULL, ",", &saveptr);
+
+            char *typeStr =
+                strtok_r(NULL, ",", &saveptr);
+
+            char *msg_id =
+                strtok_r(NULL, ",", &saveptr);
+
+            char *last_hop =
+                strtok_r(NULL, ",", &saveptr);
+
+            char *hopStr =
+                strtok_r(NULL, ",", &saveptr);
+
+            if(
+                sender == NULL ||
+                receiver == NULL ||
+                command == NULL ||
+                typeStr == NULL ||
+                msg_id == NULL ||
+                last_hop == NULL ||
+                hopStr == NULL
+            )
+            {
+                DEBUG_PRINTLN("❌ Invalid packet");
+                continue;
+            }
+
+            message_type_t type =
+                (message_type_t)atoi(typeStr);
+
+            int hop_count = atoi(hopStr);
+
+            sender[strcspn(sender, "\r\n\t ")] = 0;
+            receiver[strcspn(receiver, "\r\n\t ")] = 0;
+            command[strcspn(command, "\r\n\t ")] = 0;
+            msg_id[strcspn(msg_id, "\r\n\t ")] = 0;
+            last_hop[strcspn(last_hop, "\r\n\t ")] = 0;
+            typeStr[strcspn(typeStr, "\r\n\t ")] = 0;
+            hopStr[strcspn(hopStr, "\r\n\t ")] = 0;
+
+            DEBUG_PRINT("Raw type: " + String(type));
+            DEBUG_PRINTLN(" | Type: " + String(getTypeName(type)));
+            DEBUG_PRINT("CMD FINAL:");
+            DEBUG_PRINTLN(command);
 
             //Reset acknowledgement flag
             needAck = false;
 
-            // check for duplicates first to prevent loops and unnecessary processing
+            // check duplicates
             if (isDuplicate(sender, type, msg_id)) {
                 DEBUG_PRINTLN("⚠️ Duplicate ignored");
                 continue;
             }
 
-            // Rebroadcast If Needed
-            rebroadcastIfNeeded(sender, receiver, command, type, msg_id, last_hop, hop_count);
-
-            // Ignore Messages Not for Me
-            if (receiver != nodeID && receiver != MasterID){
-                DEBUG_PRINTLN("Not for me so ignoring... (receiver: " + receiver + ")");
+            // FIRST: check if packet is for me
+            if (strcmp(receiver, nodeID) != 0 && strcmp(receiver, MasterID) != 0) {
+                // still allow rebroadcast BEFORE skipping
+                rebroadcastIfNeeded(sender, receiver, command, type, msg_id, last_hop, hop_count);
                 continue;
             }
+
+            // Rebroadcast AFTER validation (optional safer version)
+            rebroadcastIfNeeded(sender, receiver, command, type, msg_id, last_hop, hop_count);
             
             // Ignore ACK execution (Just extra saafety to prevent loops in case rebroadcast logic messed up)
             if (type == MSG_ACK) {
@@ -351,40 +477,40 @@ void EspNowOnReceiveTask(void *pvParameters) {
                 continue;
             }
 
-            DEBUG_PRINTLN("✅ CMD: " + command);
+            // DEBUG_PRINTLN("✅ CMD: " + command);
 
             // ================= LED For Debugging =================
-            if (command == "red") {
+            if (strcmp(command, "red") == 0) {
                 sendLedCommand(LED_RED);
                 needAck = true;
-            } 
-            else if (command == "green") {
-                needAck = true;
+            }
+            else if (strcmp(command, "green") == 0) {
                 sendLedCommand(LED_GREEN);
-            }
-            else if (command == "blue") {
                 needAck = true;
+            }
+            else if (strcmp(command, "blue") == 0) {
                 sendLedCommand(LED_BLUE);
-            }
-            else if (command == "off") {
                 needAck = true;
+            }
+            else if (strcmp(command, "off") == 0) {
                 sendLedCommand(LED_IDLE);
+                needAck = true;
             }
             //=========================================================
 
             //=============Set up ACK fields and send back================
-            if(command == "ping" || command == "hb") {
+            if (strcmp(command, "ping") == 0 || strcmp(command, "hb") == 0) {
                 publisshHeartBeat();
                 needAck = true;
             }
 
-            if(command == "sd"){
+            if (strcmp(command, "sd") == 0){
                 needAck = true;
                 publishSensorData();
             }
             
             //Repeater on/off
-            if(command == "repeater:1") {
+            if (strcmp(command, "repeater:1") == 0) {
                 isRepeater = true;
                 preferences.begin("device_config", false);
                 preferences.putBool("is_repeater", true);
@@ -392,7 +518,7 @@ void EspNowOnReceiveTask(void *pvParameters) {
                 needAck = true;
                 sendLedCommand(LED_REPEATER_ON);
             }
-            if(command == "repeater:0") {
+            if (strcmp(command, "repeater:0") == 0) {
                 isRepeater = false;
                 preferences.begin("device_config", false);
                 preferences.putBool("is_repeater", false);
@@ -402,47 +528,66 @@ void EspNowOnReceiveTask(void *pvParameters) {
             }
 
             //Set Maximum Forwards
-            if(command.startsWith("max_fwds:")) {
-                MAX_FWDS = command.substring(9).toInt();
-                if(MAX_FWDS <= 20 || MAX_FWDS > 1000) {
+            if (strncmp(command, "max_fwds:", 9) == 0) {
+                int val = atoi(command + 9);
+
+                MAX_FWDS = val;
+
+                if (MAX_FWDS <= 20 || MAX_FWDS > 1000)
+                {
                     MAX_FWDS = 50; // sanity check
                 }
+
                 preferences.begin("device_config", false);
                 preferences.putInt("max_fwds", MAX_FWDS);
                 preferences.end();
+
                 needAck = true;
                 sendLedCommand(LED_MAX_FWDS_SET);
             }
 
             //Set Maximum Hops
-            if(command.startsWith("max_hops:")) {
-                MAX_HOPS = command.substring(9).toInt();
-                if(MAX_HOPS <= 1 || MAX_HOPS > 100) {
+            if (strncmp(command, "max_hops:", 9) == 0) {
+                int val = atoi(command + 9);
+
+                MAX_HOPS = val;
+
+                if (MAX_HOPS <= 1 || MAX_HOPS > 100)
+                {
                     MAX_HOPS = 5; // sanity check
                 }
+
                 preferences.begin("device_config", false);
                 preferences.putInt("max_hops", MAX_HOPS);
                 preferences.end();
+
                 needAck = true;
                 sendLedCommand(LED_MAX_HOPS_SET);
             }
 
             //Set Heartbeat Interval
-            if(command.startsWith("hb_interval:")) {
-                hb_interval = command.substring(12).toInt();
-                if(hb_interval <= 1 || hb_interval > 1440) {
+            if (strncmp(command, "hb_interval:", 12) == 0) {
+                int val = atoi(command + 12);
+
+                hb_interval = val;
+
+                if (hb_interval <= 1 || hb_interval > 1440)
+                {
                     hb_interval = 5; // sanity check
                 }
+
                 HB_INTERVAL = hb_interval * 60 * 1000;
+
                 preferences.begin("device_config", false);
                 preferences.putInt("hb_interval", hb_interval);
                 preferences.end();
+
                 needAck = true;
                 sendLedCommand(LED_HEARTBEAT_SET);
             }
 
             //Set Encryption on/off
-            if(command == "enc:1") {
+            if (strcmp(command, "enc:1") == 0) {
                 useEncryption = true;
                 preferences.begin("device_config", false);
                 preferences.putBool("use_encryption", true);
@@ -451,7 +596,8 @@ void EspNowOnReceiveTask(void *pvParameters) {
                 needAck = true;
                 sendLedCommand(LED_REPEATER_ON);
             }
-            if(command == "enc:0") {
+
+            if (strcmp(command, "enc:0") == 0) {
                 useEncryption = false;
                 preferences.begin("device_config", false);
                 preferences.putBool("use_encryption", false);
@@ -462,7 +608,7 @@ void EspNowOnReceiveTask(void *pvParameters) {
             }
 
             //Set Light Dependent Node on/off
-            if(command == "lds:1") {
+            if (strcmp(command, "lds:1") == 0) {
                 onOffByLDR = true;
                 preferences.begin("device_config", false);
                 preferences.putBool("lds", true);
@@ -473,7 +619,7 @@ void EspNowOnReceiveTask(void *pvParameters) {
                 publishSensorData();
             }
 
-            if(command == "lds:0") {
+            if (strcmp(command, "lds:0") == 0) {
                 onOffByLDR = false;
                 preferences.begin("device_config", false);
                 preferences.putBool("lds", false);
@@ -485,42 +631,61 @@ void EspNowOnReceiveTask(void *pvParameters) {
             }
 
             //Set Node Dependent Light High and Low Value
-            if(command.startsWith("lds_high:")) {
-                ldrHighValue = command.substring(9).toInt();
-                if(ldrHighValue >= 100) {
+            // Set LDR High
+            if (strncmp(command, "lds_high:", 9) == 0) {
+                int val = atoi(command + 9);
+
+                ldrHighValue = val;
+
+                if (ldrHighValue >= 100)
+                {
                     ldrHighValue = 99; // sanity check
                 }
 
-                if(ldrHighValue <= ldrLowValue){
+                if (ldrHighValue <= ldrLowValue)
+                {
                     ldrHighValue = ldrLowValue - 1;
                 }
+
                 ldrHighValue = ldrHighValue * 40;
 
                 needAck = true;
+
                 preferences.begin("device_config", false);
                 preferences.putInt("ldsHigh", ldrHighValue);
                 preferences.end();
+
                 sendLedCommand(LED_MAX_FWDS_SET);
             }
 
-            if(command.startsWith("lds_low:")) {
-                ldrLowValue = command.substring(8).toInt();
-                if(ldrLowValue <= 0) {
+            // Set LDR Low
+            if (strncmp(command, "lds_low:", 8) == 0) {
+                int val = atoi(command + 8);
+
+                ldrLowValue = val;
+
+                if (ldrLowValue <= 0)
+                {
                     ldrLowValue = 1; // sanity check
                 }
-                if(ldrLowValue >= ldrHighValue){
+
+                if (ldrLowValue >= ldrHighValue)
+                {
                     ldrLowValue = ldrHighValue + 1;
                 }
+
                 ldrLowValue = ldrLowValue * 40;
 
                 needAck = true;
+
                 preferences.begin("device_config", false);
                 preferences.putInt("ldsLow", ldrLowValue);
                 preferences.end();
+
                 sendLedCommand(LED_MAX_FWDS_SET);
             }
 
-            if(command == "ldr_rev:1"){
+            if (strcmp(command, "ldr_rev:1") == 0){
                 IS_LDR_REVERSE = true;
 
                 preferences.begin("device_config", false);
@@ -532,7 +697,7 @@ void EspNowOnReceiveTask(void *pvParameters) {
                 publishSensorData();
             }
 
-            if(command == "ldr_rev:0"){
+            if (strcmp(command, "ldr_rev:0") == 0){
                 IS_LDR_REVERSE = false;
 
                 preferences.begin("device_config", false);
@@ -545,33 +710,40 @@ void EspNowOnReceiveTask(void *pvParameters) {
             }
 
             //Set Node Dependent Light High and Low Value
-            if(command.startsWith("ct_ratio:")) {
-                CT_CALIB_FACTOR = command.substring(9).toFloat();
-                
+            if (strncmp(command, "ct_ratio:", 9) == 0) {
+                const char *valStr = strchr(command, ':');
+                if (!valStr) return;
+
+                float val = atof(valStr + 1);
+
+                CT_CALIB_FACTOR = val;
+
                 preferences.begin("device_config", false);
                 preferences.putFloat("ctRatio", CT_CALIB_FACTOR);
                 preferences.end();
+
                 needAck = true;
                 sendLedCommand(LED_MAX_FWDS_SET);
+
                 publishSensorData();
             }
 
             // Handle switch commands
             //============================================================//
 
-            if(command == "sw1:1" || command == "sw1:0" ||
-                command == "sw2:1" || command == "sw2:0" ||
-                command == "sw3:1" || command == "sw3:0" ||
-                command == "sw4:1" || command == "sw4:0" ||
-                command == "sw1234:1" || command == "sw1234:0") {
-                DEBUG_PRINTLN("Handling switch command: " + command);
+            if (
+                strcmp(command, "sw1:1") == 0 || strcmp(command, "sw1:0") == 0 ||
+                strcmp(command, "sw2:1") == 0 || strcmp(command, "sw2:0") == 0 ||
+                strcmp(command, "sw3:1") == 0 || strcmp(command, "sw3:0") == 0 ||
+                strcmp(command, "sw4:1") == 0 || strcmp(command, "sw4:0") == 0 ||
+                strcmp(command, "sw1234:1") == 0 || strcmp(command, "sw1234:0") == 0
+            ) {
                 needAck = true;
                 handleSwitches(command);
             }
 
             //=========== Local OTA Mode =============
-            if(command == "local_ota")
-            {
+            if (strcmp(command, "local_ota") == 0) {
                 otaMode = true;
                 otaStartTime = millis();
                 needAck = true;
@@ -586,24 +758,43 @@ void EspNowOnReceiveTask(void *pvParameters) {
 
             delay(random(70, 171));
 
-            String ack =
-                String(nodeID) + "," +
-                sender + "," +
-                command + "," +
-                String(MSG_ACK) + "," +
-                msg_id + "," +
-                String(nodeID) + "," +
-                "0";
+            char ack[ESPNOW_MAX_MSG_LEN + 1];
+
+            snprintf(
+                ack,
+                sizeof(ack),
+                "%s,%s,%s,%d,%s,%s,%d",
+                nodeID,
+                sender,
+                command,
+                MSG_ACK,
+                msg_id,
+                nodeID,
+                0
+            );
 
             if(useEncryption) {
-                String encAck = encryptSimple(ack, enckey);
-                esp_now_send(broadcastAddress, (uint8_t *)encAck.c_str(), encAck.length());
-                DEBUG_PRINTLN("📤 ACK Sent: " + encAck);
-                DEBUG_PRINTLN("📤 Original ACK: " + decryptSimple(encAck, enckey));
-            }
-            else {
-                esp_now_send(broadcastAddress, (uint8_t *)ack.c_str(), ack.length());
-                DEBUG_PRINTLN("📤 ACK Sent: " + ack);
+
+                char encAck[ESPNOW_MAX_MSG_LEN + 1];
+
+                encryptSimple(ack, encAck, enckey);
+
+                esp_now_send(
+                    broadcastAddress,
+                    (uint8_t*)encAck,
+                    strlen(encAck)
+                );
+
+            } else {
+
+                esp_now_send(
+                    broadcastAddress,
+                    (uint8_t*)ack,
+                    strlen(ack)
+                );
+
+                DEBUG_PRINT("Sent Ack: ");
+                DEBUG_PRINTLN(ack);
             }
             // sendLedCommand(LED_PING_ACK);
             // vTaskDelay(10 / portTICK_PERIOD_MS);

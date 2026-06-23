@@ -7,7 +7,7 @@ Preferences preferences;
 // #define Fast_LED 1
 // char newNodeID[16];
 
-#define Change_NODE_ID 1
+#define Change_NODE_ID 0
 #define USE_LDR
 #define USE_CT
 #define USE_SHT_TMP

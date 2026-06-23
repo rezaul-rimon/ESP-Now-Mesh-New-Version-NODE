@@ -289,7 +289,7 @@ void setup()
   MAX_FWDS = preferences.getInt("max_fwds", 50);
   MAX_HOPS = preferences.getInt("max_hops", 5);
   hb_interval = preferences.getInt("hb_interval", 5);
-  HB_INTERVAL = hb_interval * 4 * 1000;
+  HB_INTERVAL = hb_interval * 60 * 1000;
   // preferences.putBool("use_encryption", false);
   useEncryption = preferences.getBool("use_encryption", false);
 

@@ -10,16 +10,13 @@
 #include "led.h"
 
 // #define ESPNOW_RX_QUEUE_SIZE 20
-#define ESPNOW_MAX_MSG_LEN 250
+#define ESPNOW_MAX_MSG_LEN 80
 bool needAck = false;
 
 // ================= BROADCAST =================
 uint8_t broadcastAddress[] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 
 // ================= DEDUPLICATION =================
-std::deque<String> fwdCache;
-String lastCmdID;
-
 std::deque<String> recentMsgKeys;
 const size_t maxRecentIDs = 200; // Can be made configurable via Preferences
 
@@ -47,13 +44,18 @@ struct Message {
     uint8_t hop_count;
 };
 
+// ================= ESP-NOW RECEIVE STRUCTURE =================
 struct EspNowRxMessage
 {
     int len;
-    char data[ESPNOW_MAX_MSG_LEN + 1];
+    char data[ESPNOW_MAX_MSG_LEN];
 };
 
+// ================= QUEUE AND TASK HANDLES =================
+TaskHandle_t EspNowOnReceiveTaskHandle = NULL;
 QueueHandle_t espNowRxQueue = NULL;
+#define ONRECEIVE_TASK_STACK 16 * 1024
+#define ONRECEIVE_TASK_PRIORITY 2
 
 //============= Function prototypes ================
 const char* getTypeName(message_type_t type);
@@ -70,7 +72,7 @@ void EspNowOnReceiveTask(void *pvParameters);
 //===========================================================//
 
 
-// Debug helper
+//================= UTILITY FUNCTIONS =================
 const char* getTypeName(message_type_t type) {
     switch(type) {
         case MSG_CMD: return "Command";
@@ -90,8 +92,7 @@ String generateMessageID() {
 }
 
 //================= ENCRYPTION FUNCTIONS =================
-String encryptSimple(String msg, String enckey)
-{
+String encryptSimple(String msg, String enckey) {
     String out = "";
 
     for (int i = 0; i < msg.length(); i++)
@@ -113,8 +114,7 @@ String encryptSimple(String msg, String enckey)
 }
 
 //================= DECRYPTION FUNCTIONS =================
-String decryptSimple(String msg, String enckey)
-{
+String decryptSimple(String msg, String enckey) {
     String out = "";
 
     for (int i = 0; i < msg.length(); i++)
@@ -207,12 +207,12 @@ void rebroadcastIfNeeded(String sender, String receiver, String command,
 }
 
 // ================= RECEIVE =================
-// ================= RECEIVE =================
-void onReceive(const uint8_t *mac, const uint8_t *data, int len)
-{
+void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
     // 1. Basic validation
-    if (len <= 0 || len > ESPNOW_MAX_MSG_LEN)
+    if (len <= 0 || len > ESPNOW_MAX_MSG_LEN){
+        DEBUG_PRINTLN("⚠️ Packet length Exceeded: " + String(len));
         return;
+    }
 
     EspNowRxMessage msg;
 
@@ -235,10 +235,11 @@ void onReceive(const uint8_t *mac, const uint8_t *data, int len)
     // 5. Optional debug (only if needed)
     if (ok != pdTRUE)
     {
-        DEBUG_PRINTLN("⚠️ Queue Send Failed");
+        DEBUG_PRINTLN("⚠️ Queue Overflow: Failed to enqueue received message");
     }
 }
 
+// ================= MESH NODE SETUP =================
 void mesh_node_setup() {
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
@@ -261,10 +262,10 @@ void mesh_node_setup() {
     xTaskCreatePinnedToCore(
         EspNowOnReceiveTask,
         "EspNowRx",
-        16 * 1024,
+        ONRECEIVE_TASK_STACK,
         NULL,
-        2,
-        NULL,
+        ONRECEIVE_TASK_PRIORITY,
+        &EspNowOnReceiveTaskHandle,
         1
     );
 
@@ -277,8 +278,8 @@ void mesh_node_setup() {
     esp_now_register_recv_cb(onReceive);
 }
 
-void EspNowOnReceiveTask(void *pvParameters)
-{
+// ================= ESP-NOW RECEIVE TASK =================
+void EspNowOnReceiveTask(void *pvParameters) {
     EspNowRxMessage rxMsg;
 
     while(true)
@@ -300,9 +301,11 @@ void EspNowOnReceiveTask(void *pvParameters)
                 // DEBUG_PRINTLN("❌ Invalid packet");
                 continue;
             }
+            DEBUG_PRINTLN();
+            DEBUG_PRINTLN("============================================");
             DEBUG_PRINT("📥 Received from Queue:");
             DEBUG_PRINTLN(rxMsg.data);
-            DEBUG_PRINTLN("=============================");
+            DEBUG_PRINTLN("============================================");
             DEBUG_PRINTLN();
             // DEBUG_PRINTLN("\n📥 " + msg);
 
@@ -401,7 +404,7 @@ void EspNowOnReceiveTask(void *pvParameters)
             //Set Maximum Forwards
             if(command.startsWith("max_fwds:")) {
                 MAX_FWDS = command.substring(9).toInt();
-                if(MAX_FWDS <= 20 || MAX_FWDS > 500) {
+                if(MAX_FWDS <= 20 || MAX_FWDS > 1000) {
                     MAX_FWDS = 50; // sanity check
                 }
                 preferences.begin("device_config", false);
@@ -566,12 +569,22 @@ void EspNowOnReceiveTask(void *pvParameters)
                 handleSwitches(command);
             }
 
+            //=========== Local OTA Mode =============
+            if(command == "local_ota")
+            {
+                otaMode = true;
+                otaStartTime = millis();
+                needAck = true;
+                sendLedCommand(LED_GREEN);
+                xTaskCreatePinnedToCore(LocalOtaTask,"LocalOTA",LocalOtaTask_STACK,NULL,LocalOtaTask_PRIORITY,&LocalOtaTaskHandle,1);
+            }
+
             // ================= SEND ACK =================
             if(needAck == false) {
                 continue;
             }
 
-            delay(random(70, 271));
+            delay(random(70, 171));
 
             String ack =
                 String(nodeID) + "," +

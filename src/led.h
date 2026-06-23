@@ -26,12 +26,12 @@ enum LedCommandType {
     LED_MAX_HOPS_SET
 };
 
-TaskHandle_t ledTaskHandle = NULL;
 QueueHandle_t ledCommandQueue = NULL;
-
-#define LED_TASK_PRIORITY 1
 #define LED_CMD_QUEUE_SIZE 10
-#define LED_TASK_STACK 2048
+
+// TaskHandle_t ledTaskHandle = NULL;
+// #define LED_TASK_PRIORITY 1
+// #define LED_TASK_STACK 2 * 1024
 
 struct LedCommand {
     LedCommandType type;

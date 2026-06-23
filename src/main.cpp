@@ -4,14 +4,22 @@
 #include "led.h"
 #include "smart_switch.h"
 #include "sensors.h"
+#include <WebServer.h>
+#include <Update.h>
 
-TaskHandle_t mainTaskHandle = NULL;
+WebServer server(80);
 
-#define MAIN_TASK_PRIORITY 1
-#define MAIN_TASK_STACK 16 * 1024
 
-void publisshHeartBeat()
-{
+// TaskHandle_t mainTaskHandle = NULL;
+// #define MAIN_TASK_PRIORITY 1
+// #define MAIN_TASK_STACK 8 * 1024
+
+// TaskHandle_t LocalOtaTaskHandle = NULL;
+// #define LocalOtaTask_PRIORITY 3
+// #define LocalOtaTask_STACK 8 * 1024
+
+//=============== PUBLISH HEARTBEAT =================
+void publisshHeartBeat() {
   
   Message hbmsg;
   hbmsg.sender_id = nodeID;
@@ -49,8 +57,8 @@ void publisshHeartBeat()
   sendLedCommand(LED_HEARTBEAT);
 }
 
-void publishSensorData()
-{
+// ================= PUBLISH SENSOR DATA =================
+void publishSensorData() {
   float temperature = 0;
   float avgIrms = 0;
   float avgWatt = 0;
@@ -92,17 +100,17 @@ void publishSensorData()
   avgLdr /= samples;
   avgLightIntensity /= samples;
 
-  Serial.println("Temperature: " + String(temperature, 1));
+  DEBUG_PRINTLN("Temperature: " + String(temperature, 1));
 
-  Serial.println("I= " + String(avgIrms, 2) +
+  DEBUG_PRINTLN("I= " + String(avgIrms, 2) +
                   " W= " + String(avgWatt, 2));
 
-  Serial.println("LDR: " + String(avgLdr, 1));
+  DEBUG_PRINTLN("LDR: " + String(avgLdr, 1));
 
-  Serial.println("light_intensity: " +
+  DEBUG_PRINTLN("light_intensity: " +
                   String(avgLightIntensity, 1));
 
-  Serial.println();
+  DEBUG_PRINTLN();
 
   preferences.begin("switches", false);  // Open Preferences
 
@@ -153,11 +161,9 @@ void publishSensorData()
 //==========================================================//
 //===================== Main Task ==========================//
 //==========================================================//
-
-void mainTask(void *parameter)
-{
+void mainTask(void *parameter) {
   // void publisshHeartBeat();
-  HB_INTERVAL = HB_INTERVAL + random(0, 900); // Randomize heartbeat interval between 3-7 seconds for testing
+  HB_INTERVAL = HB_INTERVAL + random(0, 15000); // Randomize heartbeat interval between 3-7 seconds for testing
 
   while (1)
   {
@@ -167,39 +173,39 @@ void mainTask(void *parameter)
 
       lastHeartbeat = millis();
 
-      if (digitalRead(0) == LOW)
-      {
+      if (digitalRead(0) == LOW) {
         isButtonPressed = true;
       }
 
       //===============================================//
       publisshHeartBeat();
 
-      // 🔴 Handle sensor reinitialization & LED blinking if not ready
-      if (!shtInitialized)
-      {
-        static unsigned long lastAttempt = 0;
-        static unsigned long lastBlink = 0;
-        static bool ledOn = false;
+      #if defined(USE_SHT_TMP)
+        // 🔴 Handle sensor reinitialization & LED blinking if not ready
+        if (!shtInitialized) {
+          static unsigned long lastAttempt = 0;
+          static unsigned long lastBlink = 0;
+          static bool ledOn = false;
 
-        // 🔄 Retry sensor init every 10 seconds
-        if (millis() - lastAttempt > 10000)
-        {
-          Serial.println("🔄 Retrying SHT3x init...");
-          if (sht.begin(0x44))
+          // 🔄 Retry sensor init every 10 seconds
+          if (millis() - lastAttempt > 10000)
           {
-            shtInitialized = true;
-            Serial.println("✅ SHT3x initialized during loop.");
-            leds[0] = CRGB::Green;
-            FastLED.show();
-            delay(1000);
-            leds[0] = CRGB::Black;
-            FastLED.show();
+            DEBUG_PRINTLN("🔄 Retrying SHT3x init...");
+            if (sht.begin(0x44))
+            {
+              shtInitialized = true;
+              DEBUG_PRINTLN("✅ SHT3x initialized during loop.");
+              leds[0] = CRGB::Green;
+              FastLED.show();
+              delay(1000);
+              leds[0] = CRGB::Black;
+              FastLED.show();
+            }
+            lastAttempt = millis();
           }
-          lastAttempt = millis();
+          // 🔴 Blink red LED every 500ms
         }
-        // 🔴 Blink red LED every 500ms
-      }
+      #endif
 
       vTaskDelay(pdMS_TO_TICKS(100));
 
@@ -207,8 +213,7 @@ void mainTask(void *parameter)
 
       //===============================================//
 
-      if (digitalRead(0) == HIGH)
-      {
+      if (digitalRead(0) == HIGH) {
         isButtonPressed = false;
       }
     }
@@ -217,8 +222,7 @@ void mainTask(void *parameter)
     static bool lastState = false;
     bool currentState;
 
-    if (onOffByLDR)
-    {
+    if (onOffByLDR) {
         int ldr = analogRead(LDR_PIN);
         if(IS_LDR_REVERSE == true){
           ldr = 4095 - ldr;
@@ -242,14 +246,14 @@ void mainTask(void *parameter)
         {
             if (currentState)
             {
-              Serial.println("LDR: "+String(ldr));
-              Serial.println("LDR -> ON");
+              DEBUG_PRINTLN("LDR: "+String(ldr));
+              DEBUG_PRINTLN("LDR -> ON");
               handleSwitches("sw1:1");
             }
             else
             {
-              Serial.println("LDR: "+String(ldr));
-              Serial.println("LDR -> OFF");
+              DEBUG_PRINTLN("LDR: "+String(ldr));
+              DEBUG_PRINTLN("LDR -> OFF");
               handleSwitches("sw1:0");
             }
 
@@ -260,15 +264,122 @@ void mainTask(void *parameter)
         }
     }
 
-    
-
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }
 
+//================== SUSPEND ALL TASKS =================
+void suspendAllTasks() {
+  if (mainTaskHandle != NULL) {
+    vTaskSuspend(mainTaskHandle);
+  }
+  if (EspNowOnReceiveTaskHandle != NULL) {
+    vTaskSuspend(EspNowOnReceiveTaskHandle);
+  }
+  //NO need to suspend led task and Local OTA Task
+}
+
+//================== LOCAL OTA UPDATE =================
+void startLocalOTA() {
+    suspendAllTasks();
+    server.on("/", HTTP_GET, []()
+    {
+        server.send(
+            200,
+            "text/html",
+            "<form method='POST' action='/update' enctype='multipart/form-data'>"
+            "<input type='file' name='update'>"
+            "<input type='submit' value='Upload'>"
+            "</form>"
+        );
+    });
+
+    server.on(
+        "/update",
+        HTTP_POST,
+        []()
+        {
+            server.send(200, "text/plain", "Update Success. Rebooting...");
+            delay(1000);
+            ESP.restart();
+        },
+        []()
+        {
+            HTTPUpload& upload = server.upload();
+
+            if(upload.status == UPLOAD_FILE_START)
+            {
+                Update.begin(UPDATE_SIZE_UNKNOWN);
+            }
+            else if(upload.status == UPLOAD_FILE_WRITE)
+            {
+                Update.write(upload.buf, upload.currentSize);
+            }
+            else if(upload.status == UPLOAD_FILE_END)
+            {
+                Update.end(true);
+            }
+        }
+    );
+
+    server.begin();
+}
+
+//================== LOCAL OTA TASK =================
+void LocalOtaTask(void *pvParameters) {
+    bool otaStarted = false;
+    DEBUG_PRINTLN("Local OTA Task Started");
+
+    while(true)
+    {
+        if(otaMode)
+        {
+            if(!otaStarted)
+            {
+                otaStarted = true;
+
+                DEBUG_PRINTLN("Starting OTA AP...");
+
+                WiFi.mode(WIFI_AP);
+
+                String ssid = "LP_" + String(nodeID);
+
+                WiFi.softAP(
+                    ssid.c_str(),
+                    "dmabd987"
+                );
+
+                DEBUG_PRINT("OTA IP: ");
+                DEBUG_PRINTLN(WiFi.softAPIP());
+
+                // Start ElegantOTA / WebServer here
+                startLocalOTA();
+            }
+
+            // Handle OTA requests
+            server.handleClient();
+
+            // Timeout
+            if(millis() - otaStartTime > OTA_TIMEOUT_MS)
+            {
+                DEBUG_PRINTLN("OTA Timeout");
+
+                otaMode = false;
+
+                ESP.restart();
+            }
+        }
+        else
+        {
+            otaStarted = false;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
 // ================= SETUP =================
-void setup()
-{
+void setup() {
   Serial.begin(115200);
 
   FastLED_setup();
@@ -286,8 +397,8 @@ void setup()
 
   String node_id = preferences.getString("node_id", "NODE1");
   isRepeater = preferences.getBool("is_repeater", true);
-  MAX_FWDS = preferences.getInt("max_fwds", 50);
-  MAX_HOPS = preferences.getInt("max_hops", 5);
+  MAX_FWDS = preferences.getInt("max_fwds", 500);
+  MAX_HOPS = preferences.getInt("max_hops", 10);
   hb_interval = preferences.getInt("hb_interval", 5);
   HB_INTERVAL = hb_interval * 60 * 1000;
   // preferences.putBool("use_encryption", false);
@@ -314,10 +425,10 @@ void setup()
   Serial.printf("✅ Node %s ready | repeater=%d | hb_interval=%d \n max_fwds=%d | max_hops=%d | useEncryption=%d \n LDS=%d | LDR_High=%d | LDR_Low=%d \n LDR Reverse=%d | CT_Ratio=%f\n", nodeID, isRepeater, hb_interval, MAX_FWDS, MAX_HOPS, useEncryption, onOffByLDR, ldrHighValue, ldrLowValue, IS_LDR_REVERSE, CT_CALIB_FACTOR);
 
   xTaskCreatePinnedToCore(mainTask, "MainTask", MAIN_TASK_STACK, NULL, MAIN_TASK_PRIORITY, &mainTaskHandle, 0);
+  // xTaskCreatePinnedToCore(LocalOtaTask,"LocalOTA",LocalOtaTask_STACK,NULL,LocalOtaTask_PRIORITY,&LocalOtaTaskHandle,1);
 }
 
 // ================= LOOP =================
-void loop()
-{
+void loop() {
   vTaskDelay(pdMS_TO_TICKS(100));
 }

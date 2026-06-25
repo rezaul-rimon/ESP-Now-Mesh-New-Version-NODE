@@ -712,7 +712,7 @@ void EspNowOnReceiveTask(void *pvParameters) {
             //Set Node Dependent Light High and Low Value
             if (strncmp(command, "ct_ratio:", 9) == 0) {
                 const char *valStr = strchr(command, ':');
-                if (!valStr) return;
+                if (!valStr) continue;
 
                 float val = atof(valStr + 1);
 

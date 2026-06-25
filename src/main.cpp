@@ -186,7 +186,7 @@ void publishSensorData() {
 //==========================================================//
 void mainTask(void *parameter) {
   // void publisshHeartBeat();
-  HB_INTERVAL = HB_INTERVAL + random(0, 15000); // Randomize heartbeat interval between 3-7 seconds for testing
+  HB_INTERVAL = HB_INTERVAL + random(0, 15000); // Randomize heartbeat interval between 0-15 seconds for testing
 
   while (1)
   {
@@ -419,7 +419,7 @@ void setup() {
   #endif
 
   String node_id = preferences.getString("node_id", "NODE1");
-  isRepeater = preferences.getBool("is_repeater", true);
+  isRepeater = preferences.getBool("is_repeater", false);
   MAX_FWDS = preferences.getInt("max_fwds", 500);
   MAX_HOPS = preferences.getInt("max_hops", 10);
   hb_interval = preferences.getInt("hb_interval", 5);

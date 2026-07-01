@@ -71,7 +71,11 @@ void publisshHeartBeat() {
 
 // ================= PUBLISH SENSOR DATA =================
 void publishSensorData() {
-  float temperature = ntcSensor.readTemperature();
+  #if defined(USE_SHT_TMP)
+    float temperature = random(300, 350) / 10.0; // Simulated temperature for testing
+  #else
+    float temperature = ntcSensor.readTemperature();
+  #endif
 
   const int samples = 10;
 
@@ -80,8 +84,7 @@ void publishSensorData() {
   float avgLdr = 0;
   float avgLightIntensity = 0;
 
-  for (int i = 0; i < samples; i++)
-  {
+  for (int i = 0; i < samples; i++) {
       double Irms = emon1.calcIrms(1480);
       float watt = 230.0 * Irms;
 
@@ -202,33 +205,6 @@ void mainTask(void *parameter) {
 
       //===============================================//
       publisshHeartBeat();
-
-      #if defined(USE_SHT_TMP)
-        // 🔴 Handle sensor reinitialization & LED blinking if not ready
-        if (!shtInitialized) {
-          static unsigned long lastAttempt = 0;
-          static unsigned long lastBlink = 0;
-          static bool ledOn = false;
-
-          // 🔄 Retry sensor init every 10 seconds
-          if (millis() - lastAttempt > 10000)
-          {
-            DEBUG_PRINTLN("🔄 Retrying SHT3x init...");
-            if (sht.begin(0x44))
-            {
-              shtInitialized = true;
-              DEBUG_PRINTLN("✅ SHT3x initialized during loop.");
-              leds[0] = CRGB::Green;
-              FastLED.show();
-              delay(1000);
-              leds[0] = CRGB::Black;
-              FastLED.show();
-            }
-            lastAttempt = millis();
-          }
-          // 🔴 Blink red LED every 500ms
-        }
-      #endif
 
       vTaskDelay(pdMS_TO_TICKS(100));
 

@@ -13,7 +13,7 @@ void LocalOtaTask(void *pvParameters);
 
 #define USE_LDR
 #define USE_CT
-// #define USE_SHT_TMP
+#define USE_SHT_TMP
 
 bool otaMode = false;
 unsigned long otaStartTime = 0;

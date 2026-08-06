@@ -3,7 +3,7 @@
 #include "mesh_node.h"
 #include "led.h"
 #include "smart_switch.h"
-#include "sensors.h"
+#include "ds18b20.h"
 #include <WebServer.h>
 #include <Update.h>
 
@@ -72,117 +72,90 @@ void publisshHeartBeat() {
 // ================= PUBLISH SENSOR DATA =================
 
 void publishSensorData() {
-  #if defined(USE_SHT_TMP)
-    float temperature = random(300, 350) / 10.0; // Simulated temperature for testing
-  #else
-    float temperature = ntcSensor.readTemperature();
-  #endif
+  #ifdef USE_DS18B20
 
-  const int samples = 10;
+    char command[128];
 
-  double avgIrms = 0;
-  double avgWatt = 0;
-  float avgLdr = 0;
-  float avgLightIntensity = 0;
+    // Read all sensors simultaneously
+    sensors.requestTemperatures();
 
-  for (int i = 0; i < samples; i++) {
-      double Irms = emon1.calcIrms(1480);
-      float watt = 230.0 * Irms;
+    for (int i = 0; i < sensorCount; i++) {
+      float temperature = sensors.getTempC(sensorAddress[i]);
 
-      avgIrms += Irms;
-      avgWatt += watt;
-
-      int ldr = analogRead(LDR_PIN);
-
-      if (IS_LDR_REVERSE)
-      {
-          ldr = 4095 - ldr;
+      // Skip disconnected sensor
+      if (temperature == DEVICE_DISCONNECTED_C) {
+        Serial.print("Sensor ");
+        Serial.print(i);
+        Serial.println(" disconnected.");
+        continue;
       }
 
-      float light_intensity = ldr / 40.95;
+      // Sensor ID
+      String id = addressToString(sensorAddress[i]);
 
-      avgLdr += ldr;
-      avgLightIntensity += light_intensity;
+      Serial.print(id);
+      Serial.print(",");
+      Serial.println(temperature);
 
-      vTaskDelay(pdMS_TO_TICKS(500));
-  }
+      // Build command:
+      // 28FF641E7B1603A5/27.56
+      snprintf(
+          command,
+          sizeof(command),
+          "%s/%.2f",
+          id.c_str(),
+          temperature);
 
-  avgIrms /= samples;
-  avgWatt /= samples;
-  avgLdr /= samples;
-  avgLightIntensity /= samples;
+      // Generate Message ID
+      char msg_id[8];
+      snprintf(msg_id, sizeof(msg_id), "%04X", esp_random() & 0xFFFF);
 
-  DEBUG_PRINTLN("T: " + String(temperature));
-  DEBUG_PRINTLN("I: " + String(avgIrms));
-  DEBUG_PRINTLN("W: " + String(avgWatt));
-  DEBUG_PRINTLN("LDR: " + String(avgLdr));
-  DEBUG_PRINTLN("Light: " + String(avgLightIntensity));
+      // Final ESP-NOW Payload
+      char nodePayload[ESPNOW_MAX_MSG_LEN + 1];
 
-  preferences.begin("switches", false);
-  bool sw1 = preferences.getBool("sw1", true);
-  preferences.end();
+      snprintf(
+          nodePayload,
+          sizeof(nodePayload),
+          "%s,%s,%s,%d,%s,%s,%d",
+          nodeID,
+          "gw0",
+          command,
+          MSG_SD,
+          msg_id,
+          nodeID,
+          0);
 
-  // ================= BUILD COMMAND (NO STRING) =================
-  char command[128];
+      // Send
+      if (useEncryption) {
+        char encPayload[ESPNOW_MAX_MSG_LEN + 1];
 
-  snprintf(
-      command,
-      sizeof(command),
-      "sd/W:%.0f/L:%.0f/T:%.1f/Tg:0/LDS:%d/sw1:%d",
-      avgWatt,
-      avgLightIntensity,
-      temperature,
-      onOffByLDR ? 1 : 0,
-      sw1 ? 1 : 0
-  );
+        encryptSimple(nodePayload, encPayload, enckey);
 
-  // ================= MESSAGE ID (NO String function) =================
-  char msg_id[8];
-  snprintf(msg_id, sizeof(msg_id), "%04X", esp_random() & 0xFFFF);
+        esp_now_send(
+            broadcastAddress,
+            (uint8_t *)encPayload,
+            strlen(encPayload));
 
-  // ================= BUILD FINAL PACKET =================
-  char nodePayload[ESPNOW_MAX_MSG_LEN + 1];
-
-  snprintf(
-      nodePayload,
-      sizeof(nodePayload),
-      "%s,%s,%s,%d,%s,%s,%d",
-      nodeID,
-      "gw0",
-      command,
-      MSG_SD,
-      msg_id,
-      nodeID,
-      0
-  );
-
-  // ================= SEND =================
-  if (useEncryption)
-  {
-      char encPayload[ESPNOW_MAX_MSG_LEN + 1];
-
-      encryptSimple(nodePayload, encPayload, enckey);
-
-      esp_now_send(
-          broadcastAddress,
-          (uint8_t *)encPayload,
-          strlen(encPayload)
-      );
-
-      DEBUG_PRINTLN(encPayload);
-  }
-  else
-  {
-      esp_now_send(
+        DEBUG_PRINTLN(encPayload);
+      }
+      else {
+        esp_now_send(
           broadcastAddress,
           (uint8_t *)nodePayload,
-          strlen(nodePayload)
-      );
+          strlen(nodePayload));
 
-      DEBUG_PRINTLN("SensorData: " + String(nodePayload));
-  }
+        DEBUG_PRINTLN(nodePayload);
+      }
 
-  sendLedCommand(LED_HEARTBEAT);
+      // Small delay to avoid flooding ESP-NOW
+      delay(10);
+    }
+
+    Serial.println("----------------------------");
+
+  #endif
+
+    sendLedCommand(LED_HEARTBEAT);
 }
 
 //==========================================================//
@@ -209,7 +182,7 @@ void mainTask(void *parameter) {
 
       vTaskDelay(pdMS_TO_TICKS(100));
 
-      // publishSensorData();
+      publishSensorData();
 
       //===============================================//
 
@@ -219,53 +192,6 @@ void mainTask(void *parameter) {
     }
     //===================================================//
 
-    /*
-    static bool lastState = false;
-    bool currentState;
-
-    if (onOffByLDR) {
-      int ldr = analogRead(LDR_PIN);
-      if(IS_LDR_REVERSE == true){
-        ldr = 4095 - ldr;
-      }
-
-      if (ldr < ldrLowValue)
-      {
-          currentState = true;
-      }
-      else if (ldr > ldrHighValue)
-      {
-          currentState = false;
-      }
-      else
-      {
-          currentState = lastState;
-      }
-
-      // State changed?
-      if (currentState != lastState)
-      {
-          if (currentState)
-          {
-            DEBUG_PRINTLN("LDR: "+String(ldr));
-            DEBUG_PRINTLN("LDR -> ON");
-            handleSwitches("sw1:1");
-          }
-          else
-          {
-            DEBUG_PRINTLN("LDR: "+String(ldr));
-            DEBUG_PRINTLN("LDR -> OFF");
-            handleSwitches("sw1:0");
-          }
-
-          // publishSensorData();
-
-          // Update AFTER action
-          lastState = currentState;
-      }
-    }
-
-    */
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }
@@ -406,25 +332,16 @@ void setup() {
   // preferences.putBool("use_encryption", false);
   useEncryption = preferences.getBool("use_encryption", false);
 
-  onOffByLDR = preferences.getBool("lds", false);
-  ldrLowValue = preferences.getInt("ldsLow", 40*40);
-  ldrHighValue = preferences.getInt("ldsHigh", 80*40);
-  IS_LDR_REVERSE = preferences.getBool("ldrRev", false);
-  CT_CALIB_FACTOR = preferences.getFloat("ctRatio", 1.25);
-
 
   preferences.end();
 
   strncpy(nodeID, node_id.c_str(), sizeof(nodeID));
   nodeID[sizeof(nodeID) - 1] = '\0';
 
-  smart_switch_setup();
+  ds18b20_setup();
   mesh_node_setup();
-  // sht3x_sensor_setup();
-  ct_setup();
-  ldr_setup();
 
-  Serial.printf("✅ Node %s ready | repeater=%d | hb_interval=%d \n max_fwds=%d | max_hops=%d | useEncryption=%d \n LDS=%d | LDR_High=%d | LDR_Low=%d \n LDR Reverse=%d | CT_Ratio=%f\n", nodeID, isRepeater, hb_interval, MAX_FWDS, MAX_HOPS, useEncryption, onOffByLDR, ldrHighValue, ldrLowValue, IS_LDR_REVERSE, CT_CALIB_FACTOR);
+  Serial.printf("✅ Node %s ready | repeater=%d | hb_interval=%d \n max_fwds=%d | max_hops=%d | useEncryption=%d \n", nodeID, isRepeater, hb_interval, MAX_FWDS, MAX_HOPS, useEncryption);
 
   xTaskCreatePinnedToCore(mainTask, "MainTask", MAIN_TASK_STACK, NULL, MAIN_TASK_PRIORITY, &mainTaskHandle, 0);
   // xTaskCreatePinnedToCore(LocalOtaTask,"LocalOTA",LocalOtaTask_STACK,NULL,LocalOtaTask_PRIORITY,&LocalOtaTaskHandle,1);

@@ -3,6 +3,8 @@
 #include <Preferences.h>
 #include <FastLED.h>
 
+#define USE_DS18B20
+
 //============== Function Prototyping ==========
 void publisshHeartBeat();
 void publishSensorData();
@@ -11,28 +13,16 @@ void startLocalOTA();
 void LocalOtaTask(void *pvParameters);
 //=================================================
 
-#define USE_SENSOR
-#define USE_LDR
-#define USE_CT
-#define USE_SHT_TMP
-
 bool otaMode = false;
 unsigned long otaStartTime = 0;
 #define OTA_TIMEOUT_MS (15UL * 60UL * 1000UL)
 
 Preferences preferences;
 
-bool IS_LDR_REVERSE;
-float CT_CALIB_FACTOR;
-
-bool onOffByLDR;
-int ldrLowValue;
-int ldrHighValue;
-
 #define Change_NODE_ID 0
 
 #if Change_NODE_ID
-    char newNodeID[16] = "1225369"; // Set new Node ID if needed
+    char newNodeID[16] = "INCHN12930001"; // Set new Node ID if needed
 #endif
 const char* MasterID = "9999999"; // Set Master ID if needed
 

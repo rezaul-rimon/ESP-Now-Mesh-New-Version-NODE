@@ -70,6 +70,7 @@ void publisshHeartBeat() {
 }
 
 // ================= PUBLISH SENSOR DATA =================
+
 void publishSensorData() {
   #if defined(USE_SHT_TMP)
     float temperature = random(300, 350) / 10.0; // Simulated temperature for testing
@@ -208,7 +209,7 @@ void mainTask(void *parameter) {
 
       vTaskDelay(pdMS_TO_TICKS(100));
 
-      publishSensorData();
+      // publishSensorData();
 
       //===============================================//
 
@@ -218,51 +219,53 @@ void mainTask(void *parameter) {
     }
     //===================================================//
 
+    /*
     static bool lastState = false;
     bool currentState;
 
     if (onOffByLDR) {
-        int ldr = analogRead(LDR_PIN);
-        if(IS_LDR_REVERSE == true){
-          ldr = 4095 - ldr;
-        }
+      int ldr = analogRead(LDR_PIN);
+      if(IS_LDR_REVERSE == true){
+        ldr = 4095 - ldr;
+      }
 
-        if (ldr < ldrLowValue)
-        {
-            currentState = true;
-        }
-        else if (ldr > ldrHighValue)
-        {
-            currentState = false;
-        }
-        else
-        {
-            currentState = lastState;
-        }
+      if (ldr < ldrLowValue)
+      {
+          currentState = true;
+      }
+      else if (ldr > ldrHighValue)
+      {
+          currentState = false;
+      }
+      else
+      {
+          currentState = lastState;
+      }
 
-        // State changed?
-        if (currentState != lastState)
-        {
-            if (currentState)
-            {
-              DEBUG_PRINTLN("LDR: "+String(ldr));
-              DEBUG_PRINTLN("LDR -> ON");
-              handleSwitches("sw1:1");
-            }
-            else
-            {
-              DEBUG_PRINTLN("LDR: "+String(ldr));
-              DEBUG_PRINTLN("LDR -> OFF");
-              handleSwitches("sw1:0");
-            }
+      // State changed?
+      if (currentState != lastState)
+      {
+          if (currentState)
+          {
+            DEBUG_PRINTLN("LDR: "+String(ldr));
+            DEBUG_PRINTLN("LDR -> ON");
+            handleSwitches("sw1:1");
+          }
+          else
+          {
+            DEBUG_PRINTLN("LDR: "+String(ldr));
+            DEBUG_PRINTLN("LDR -> OFF");
+            handleSwitches("sw1:0");
+          }
 
-            // publishSensorData();
+          // publishSensorData();
 
-            // Update AFTER action
-            lastState = currentState;
-        }
+          // Update AFTER action
+          lastState = currentState;
+      }
     }
 
+    */
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }

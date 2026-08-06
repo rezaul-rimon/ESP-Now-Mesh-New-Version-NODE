@@ -506,7 +506,7 @@ void EspNowOnReceiveTask(void *pvParameters) {
 
             if (strcmp(command, "sd") == 0){
                 needAck = true;
-                publishSensorData();
+                // publishSensorData();
             }
             
             //Repeater on/off
@@ -616,7 +616,7 @@ void EspNowOnReceiveTask(void *pvParameters) {
 
                 needAck = true;
                 sendLedCommand(LED_REPEATER_ON);
-                publishSensorData();
+                // publishSensorData();
             }
 
             if (strcmp(command, "lds:0") == 0) {
@@ -627,7 +627,7 @@ void EspNowOnReceiveTask(void *pvParameters) {
 
                 needAck = true;
                 sendLedCommand(LED_REPEATER_OFF);
-                publishSensorData();
+                // publishSensorData();
             }
 
             //Set Node Dependent Light High and Low Value
@@ -694,7 +694,7 @@ void EspNowOnReceiveTask(void *pvParameters) {
 
                 needAck = true;
                 sendLedCommand(LED_REPEATER_ON);
-                publishSensorData();
+                // publishSensorData();
             }
 
             if (strcmp(command, "ldr_rev:0") == 0){
@@ -706,7 +706,7 @@ void EspNowOnReceiveTask(void *pvParameters) {
 
                 needAck = true;
                 sendLedCommand(LED_REPEATER_OFF);
-                publishSensorData();
+                // publishSensorData();
             }
 
             //Set Node Dependent Light High and Low Value
@@ -725,7 +725,7 @@ void EspNowOnReceiveTask(void *pvParameters) {
                 needAck = true;
                 sendLedCommand(LED_MAX_FWDS_SET);
 
-                publishSensorData();
+                // publishSensorData();
             }
 
             // Handle switch commands

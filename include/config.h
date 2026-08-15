@@ -3,7 +3,7 @@
 #include <Preferences.h>
 #include <FastLED.h>
 
-#define USE_DS18B20
+// #define USE_DS18B20
 
 //============== Function Prototyping ==========
 void publisshHeartBeat();
@@ -22,9 +22,9 @@ Preferences preferences;
 #define Change_NODE_ID 0
 
 #if Change_NODE_ID
-    char newNodeID[16] = "INCHN12930001"; // Set new Node ID if needed
+    char newNodeID[16] = "A12930002"; // Set new Node ID if needed
 #endif
-const char* MasterID = "9999999"; // Set Master ID if needed
+const char* MasterID = "A99999999"; // Set Master ID if needed
 
 bool isButtonPressed = false; // Global flag for button press state
 

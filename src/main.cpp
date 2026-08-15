@@ -3,7 +3,6 @@
 #include "mesh_node.h"
 #include "led.h"
 #include "smart_switch.h"
-#include "ds18b20.h"
 #include <WebServer.h>
 #include <Update.h>
 
@@ -22,11 +21,15 @@ WebServer server(80);
 void publisshHeartBeat() {
   char command[48];
 
+  preferences.begin("switches", false);
+  bool sw1 = preferences.getBool("sw1", true);
+
   snprintf(
     command,
     sizeof(command),
-    "heartbeat/R:%s",
-    isRepeater ? "1" : "0"
+    "heartbeat/R:%s/sw1:%s",
+    isRepeater ? "1" : "0",
+    sw1 ? "1" : "0"
   );
 
   char nodePayload[ESPNOW_MAX_MSG_LEN + 1];
@@ -311,6 +314,7 @@ void setup() {
   Serial.begin(115200);
 
   FastLED_setup();
+  smart_switch_setup();
 
   preferences.begin("device_config", false);
 
@@ -323,7 +327,7 @@ void setup() {
     }
   #endif
 
-  String node_id = preferences.getString("node_id", "NODE1");
+  String node_id = preferences.getString("node_id", "AERATOR_NODE");
   isRepeater = preferences.getBool("is_repeater", false);
   MAX_FWDS = preferences.getInt("max_fwds", 500);
   MAX_HOPS = preferences.getInt("max_hops", 10);
@@ -338,7 +342,7 @@ void setup() {
   strncpy(nodeID, node_id.c_str(), sizeof(nodeID));
   nodeID[sizeof(nodeID) - 1] = '\0';
 
-  ds18b20_setup();
+  // ds18b20_setup();
   mesh_node_setup();
 
   Serial.printf("✅ Node %s ready | repeater=%d | hb_interval=%d \n max_fwds=%d | max_hops=%d | useEncryption=%d \n", nodeID, isRepeater, hb_interval, MAX_FWDS, MAX_HOPS, useEncryption);

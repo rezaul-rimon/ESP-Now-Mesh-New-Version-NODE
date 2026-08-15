@@ -607,6 +607,13 @@ void EspNowOnReceiveTask(void *pvParameters) {
                 sendLedCommand(LED_REPEATER_OFF);
             }
 
+
+            if (
+                strcmp(command, "sw1:1") == 0 || strcmp(command, "sw1:0") == 0) {
+                needAck = true;
+                handleSwitches(command);
+            }
+
             //=========== Local OTA Mode =============
             if (strcmp(command, "local_ota") == 0) {
                 otaMode = true;

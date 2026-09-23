@@ -72,9 +72,12 @@ void publisshHeartBeat() {
 // ================= PUBLISH SENSOR DATA =================
 
 void publishSensorData() {
+
+#if defined(USE_SENSOR)
+
   #if defined(USE_SHT_TMP)
     float temperature = random(300, 350) / 10.0; // Simulated temperature for testing
-  #else
+  #else if defined(USE_NTC_SENSOR)
     float temperature = ntcSensor.readTemperature();
   #endif
 
@@ -111,6 +114,15 @@ void publishSensorData() {
   avgWatt /= samples;
   avgLdr /= samples;
   avgLightIntensity /= samples;
+
+  
+  #else
+    float temperature = 25.0; // Default temperature if no sensor is used
+    double avgIrms = 0.0;
+    double avgWatt = 0.0;
+    float avgLdr = 0.0;
+    float avgLightIntensity = 0.0;
+  #endif
 
   DEBUG_PRINTLN("T: " + String(temperature));
   DEBUG_PRINTLN("I: " + String(avgIrms));

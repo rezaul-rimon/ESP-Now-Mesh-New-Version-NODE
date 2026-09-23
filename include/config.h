@@ -11,10 +11,14 @@ void startLocalOTA();
 void LocalOtaTask(void *pvParameters);
 //=================================================
 
-#define USE_SENSOR
-#define USE_LDR
-#define USE_CT
-#define USE_SHT_TMP
+// #define USE_SENSOR
+
+#if defined(USE_SENSOR)
+    #define USE_SHT_TMP
+    #define USE_CT
+    #define USE_LDR
+    #define USE_NTC_SENSOR
+#endif
 
 bool otaMode = false;
 unsigned long otaStartTime = 0;
@@ -31,8 +35,9 @@ int ldrHighValue;
 
 #define Change_NODE_ID 0
 
+
 #if Change_NODE_ID
-    char newNodeID[16] = "1225369"; // Set new Node ID if needed
+    char newNodeID[16] = "1225389"; // Set new Node ID if needed
 #endif
 const char* MasterID = "9999999"; // Set Master ID if needed
 
